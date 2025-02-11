@@ -378,35 +378,30 @@ static int modeset_atomic_prepare_commit(int fd, struct modeset_dev *dev,
     printf("Preparing atomic commit: plane=%u, crtc=%u, fb=%u\n",
            dev->plane.id, dev->crtc.id, buf->fb);
 
-    // 只设置plane相关的属性，不设置CRTC和connector属性
+    // 只设置必要的plane属性
     ret = set_drm_object_property(req, &dev->plane, "FB_ID", buf->fb);
     if (ret < 0) return ret;
 
     ret = set_drm_object_property(req, &dev->plane, "CRTC_ID", dev->crtc.id);
     if (ret < 0) return ret;
 
-    // 设置plane的源区域
+    // 源和目标区域设置
     ret = set_drm_object_property(req, &dev->plane, "SRC_X", 0);
     ret |= set_drm_object_property(req, &dev->plane, "SRC_Y", 0);
     ret |= set_drm_object_property(req, &dev->plane, "SRC_W", buf->width << 16);
     ret |= set_drm_object_property(req, &dev->plane, "SRC_H", buf->height << 16);
     if (ret < 0) return ret;
 
-    // 设置plane的目标区域（缩小显示区域，避免与Qt冲突）
     ret = set_drm_object_property(req, &dev->plane, "CRTC_X", 0);
     ret |= set_drm_object_property(req, &dev->plane, "CRTC_Y", 0);
     ret |= set_drm_object_property(req, &dev->plane, "CRTC_W", buf->width);
     ret |= set_drm_object_property(req, &dev->plane, "CRTC_H", buf->height);
     if (ret < 0) return ret;
 
-    // 设置plane的alpha和混合模式
-    ret = set_drm_object_property(req, &dev->plane, "alpha", 0xFFFF);
-    ret |= set_drm_object_property(req, &dev->plane, "pixel blend mode", 1);
-
-    // 设置更高的zpos，确保在Qt界面之上
+    // 设置更高的zpos
     ret = set_drm_object_property(req, &dev->plane, "zpos", 0);
     if (ret < 0) {
-        fprintf(stderr, "Note: zpos property not supported for plane %u\n", dev->plane.id);
+        fprintf(stderr, "Note: zpos property not supported\n");
     }
 
     return 0;
@@ -431,12 +426,13 @@ static int modeset_atomic_commit(int fd, struct modeset_dev *dev, uint32_t flags
         return ret;
     }
 
-re_commit:
+    // 去掉NONBLOCK标志，使用同步提交
+    flags &= ~DRM_MODE_ATOMIC_NONBLOCK;
+    
     ret = drmModeAtomicCommit(fd, req, flags, dev);
     if (ret < 0) {
         fprintf(stderr, "Failed to commit atomic request for plane %u: %s\n",
                 dev->plane.id, strerror(errno));
-        goto re_commit;
     }
 
     drmModeAtomicFree(req);
@@ -474,7 +470,7 @@ static int modeset_atomic_modeset(int fd, struct modeset_dev *dev)
 // 执行页面翻转
 static int modeset_atomic_page_flip(int fd, struct modeset_dev *dev)
 {
-    uint32_t flags = DRM_MODE_PAGE_FLIP_EVENT | DRM_MODE_ATOMIC_NONBLOCK;
+    uint32_t flags = DRM_MODE_PAGE_FLIP_EVENT;
     return modeset_atomic_commit(fd, dev, flags);
 }
 
@@ -562,7 +558,6 @@ static void page_flip_handler(int fd, unsigned int frame,
     unsigned int crtc_id, void *data)
 {
     struct modeset_dev *dev = (struct modeset_dev *)data;
-    static int retry_count = 0;
     
     printf("Page flip: frame=%u, crtc=%u, dev=%p\n", frame, crtc_id, dev);
     
@@ -572,21 +567,13 @@ static void page_flip_handler(int fd, unsigned int frame,
         update_rect_positions(dev);
         draw_rects(dev);
 
-        // 添加错误重试机制
-re_flip:
+        // 使用同步方式提交
         int ret = modeset_atomic_page_flip(fd, dev);
         if (ret < 0) {
-            if (retry_count < 3) {
-                printf("Retrying page flip...\n");
-                retry_count++;
-                goto re_flip;
-            }
-            if (ret < 0) {
-                printf("Failed to queue page flip after retries\n");
-                return;
-            }
+            printf("Failed to queue page flip\n");
+            return;
         }
-        retry_count = 0;
+        
         dev->front_buf ^= 1;
         dev->pflip_pending = true;
     }
