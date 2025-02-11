@@ -134,7 +134,7 @@ static int modeset_create_fb(int fd, struct modeset_buf *buf)
     memset(&creq, 0, sizeof(creq));
     creq.width = buf->width;
     creq.height = buf->height;
-    creq.bpp = 32;  // ARGB8888 格式
+    creq.bpp = 32;
     creq.flags = 0;
     
     ret = drmIoctl(fd, DRM_IOCTL_MODE_CREATE_DUMB, &creq);
@@ -146,15 +146,14 @@ static int modeset_create_fb(int fd, struct modeset_buf *buf)
     buf->size = creq.size;
     buf->handle = creq.handle;
 
-    // 创建帧缓冲区
+    // 创建帧缓冲区，使用plane支持的格式
     uint32_t handles[4] = {buf->handle};
     uint32_t pitches[4] = {buf->stride};
     uint32_t offsets[4] = {0};
     
-    // 使用 ARGB8888 格式创建帧缓冲，支持 alpha 通道
     ret = drmModeAddFB2(fd, buf->width, buf->height,
                         DRM_FORMAT_ARGB8888, handles, pitches, offsets,
-                        &buf->fb, 0);
+                        &buf->fb, DRM_MODE_FB_MODIFIERS);
     if (ret) {
         fprintf(stderr, "cannot create framebuffer (%d): %m\n", errno);
         ret = -errno;
@@ -171,7 +170,6 @@ static int modeset_create_fb(int fd, struct modeset_buf *buf)
         goto err_fb;
     }
 
-    // 执行内存映射
     buf->map = (uint8_t *)mmap(0, buf->size,
                     PROT_READ | PROT_WRITE, MAP_SHARED,
                     fd, mreq.offset);
@@ -181,9 +179,7 @@ static int modeset_create_fb(int fd, struct modeset_buf *buf)
         goto err_fb;
     }
 
-    // 清空帧缓冲区
     memset(buf->map, 0, buf->size);
-
     return 0;
 
 err_fb:
@@ -213,6 +209,85 @@ static void modeset_destroy_fb(int fd, struct modeset_buf *buf)
     drmIoctl(fd, DRM_IOCTL_MODE_DESTROY_DUMB, &dreq);
 }
 
+static int check_plane_capabilities(int fd, struct modeset_dev *dev) {
+    drmModePlane *plane = drmModeGetPlane(fd, dev->plane.id);
+    if (!plane) {
+        fprintf(stderr, "Cannot get plane %u\n", dev->plane.id);
+        return -EINVAL;
+    }
+
+    // 打印plane信息
+    printf("Plane info: id=%u, possible_crtcs=0x%x, formats_count=%u\n",
+           plane->plane_id, plane->possible_crtcs, plane->count_formats);
+
+    // 获取资源
+    drmModeRes *resources = drmModeGetResources(fd);
+    if (!resources) {
+        fprintf(stderr, "Cannot get DRM resources\n");
+        drmModeFreePlane(plane);
+        return -EINVAL;
+    }
+
+    // 检查plane是否支持指定的CRTC
+    uint32_t crtc_bit = 0;
+    bool crtc_found = false;
+    
+    // 遍历所有encoder找到与CRTC相关的possible_crtcs
+    for (int i = 0; i < resources->count_encoders; i++) {
+        drmModeEncoder *encoder = drmModeGetEncoder(fd, resources->encoders[i]);
+        if (!encoder)
+            continue;
+
+        drmModeCrtc *crtc = drmModeGetCrtc(fd, dev->crtc.id);
+        if (crtc) {
+            // 如果这个encoder当前连接到我们的CRTC
+            if (encoder->crtc_id == dev->crtc.id) {
+                crtc_bit = encoder->possible_crtcs;
+                crtc_found = true;
+                drmModeFreeCrtc(crtc);
+                drmModeFreeEncoder(encoder);
+                break;
+            }
+            drmModeFreeCrtc(crtc);
+        }
+        drmModeFreeEncoder(encoder);
+    }
+
+    drmModeFreeResources(resources);
+
+    if (!crtc_found) {
+        fprintf(stderr, "Could not find encoder for CRTC %u\n", dev->crtc.id);
+        drmModeFreePlane(plane);
+        return -EINVAL;
+    }
+
+    if (!(plane->possible_crtcs & crtc_bit)) {
+        fprintf(stderr, "Plane %u cannot be used with CRTC %u\n",
+                plane->plane_id, dev->crtc.id);
+        drmModeFreePlane(plane);
+        return -EINVAL;
+    }
+
+    // 检查格式支持
+    bool format_supported = false;
+    for (uint32_t i = 0; i < plane->count_formats; i++) {
+        if (plane->formats[i] == DRM_FORMAT_ARGB8888) {
+            format_supported = true;
+            break;
+        }
+    }
+
+    if (!format_supported) {
+        fprintf(stderr, "Plane %u does not support ARGB8888 format\n",
+                plane->plane_id);
+        drmModeFreePlane(plane);
+        return -EINVAL;
+    }
+
+    drmModeFreePlane(plane);
+    return 0;
+}
+
 // 初始化设备
 static int modeset_setup_dev(int fd, struct modeset_dev *dev)
 {
@@ -222,6 +297,13 @@ static int modeset_setup_dev(int fd, struct modeset_dev *dev)
     dev->connector.id = CONN_ID;
     dev->crtc.id = CRTC_ID;
     dev->plane.id = PLANE_ID;
+
+    // 检查plane能力
+    ret = check_plane_capabilities(fd, dev);
+    if (ret < 0) {
+        fprintf(stderr, "Plane capability check failed\n");
+        return ret;
+    }
 
     // 获取连接器信息
     drmModeConnector *conn = drmModeGetConnector(fd, dev->connector.id);
@@ -293,64 +375,53 @@ static int modeset_atomic_prepare_commit(int fd, struct modeset_dev *dev,
     struct modeset_buf *buf = &dev->bufs[dev->front_buf ^ 1];
     int ret;
 
-    // 设置连接器属性
-    ret = set_drm_object_property(req, &dev->connector, "CRTC_ID", dev->crtc.id);
-    if (ret < 0) {
-    fprintf(stderr, "Failed to set CRTC_ID property\n");
-    return ret;
-    }
+    printf("Preparing atomic commit: plane=%u, crtc=%u, fb=%u\n",
+           dev->plane.id, dev->crtc.id, buf->fb);
 
-    // 设置CRTC属性
-    ret = set_drm_object_property(req, &dev->crtc, "MODE_ID", dev->mode_blob_id);
-    if (ret < 0) {
-    fprintf(stderr, "Failed to set MODE_ID property\n");
-    return ret;
-    }
-
-    ret = set_drm_object_property(req, &dev->crtc, "ACTIVE", 1);
-    if (ret < 0) {
-    fprintf(stderr, "Failed to set ACTIVE property\n");
-    return ret;
-    }
-
-    // 设置平面属性
+    // 设置plane属性
     ret = set_drm_object_property(req, &dev->plane, "FB_ID", buf->fb);
     if (ret < 0) {
-    fprintf(stderr, "Failed to set FB_ID property\n");
-    return ret;
+        fprintf(stderr, "Failed to set FB_ID property for plane %u\n", dev->plane.id);
+        return ret;
     }
 
     ret = set_drm_object_property(req, &dev->plane, "CRTC_ID", dev->crtc.id);
     if (ret < 0) {
-    fprintf(stderr, "Failed to set plane CRTC_ID property\n");
-    return ret;
+        fprintf(stderr, "Failed to set CRTC_ID property for plane %u\n", dev->plane.id);
+        return ret;
     }
 
-    // 设置平面源属性
+    // 设置plane的源区域
     ret = set_drm_object_property(req, &dev->plane, "SRC_X", 0);
     ret |= set_drm_object_property(req, &dev->plane, "SRC_Y", 0);
     ret |= set_drm_object_property(req, &dev->plane, "SRC_W", buf->width << 16);
     ret |= set_drm_object_property(req, &dev->plane, "SRC_H", buf->height << 16);
     if (ret < 0) {
-    fprintf(stderr, "Failed to set plane SRC properties\n");
-    return ret;
+        fprintf(stderr, "Failed to set source properties for plane %u\n", dev->plane.id);
+        return ret;
     }
 
-    // 设置平面目标属性
+    // 设置plane的目标区域
     ret = set_drm_object_property(req, &dev->plane, "CRTC_X", 0);
     ret |= set_drm_object_property(req, &dev->plane, "CRTC_Y", 0);
     ret |= set_drm_object_property(req, &dev->plane, "CRTC_W", buf->width);
     ret |= set_drm_object_property(req, &dev->plane, "CRTC_H", buf->height);
     if (ret < 0) {
-    fprintf(stderr, "Failed to set plane CRTC properties\n");
-    return ret;
+        fprintf(stderr, "Failed to set CRTC properties for plane %u\n", dev->plane.id);
+        return ret;
     }
 
-    // 设置平面的alpha混合属性（如果支持）
+    // 设置plane的alpha和混合模式
     ret = set_drm_object_property(req, &dev->plane, "alpha", 0xFFFF);
+    ret |= set_drm_object_property(req, &dev->plane, "pixel blend mode", 1);
     if (ret < 0) {
-    // 如果不支持alpha属性，忽略错误
-    fprintf(stderr, "Note: alpha property not supported\n");
+        fprintf(stderr, "Note: alpha blending properties not supported for plane %u\n", dev->plane.id);
+    }
+
+    // 设置plane的zpos
+    ret = set_drm_object_property(req, &dev->plane, "zpos", 1);
+    if (ret < 0) {
+        fprintf(stderr, "Note: zpos property not supported for plane %u\n", dev->plane.id);
     }
 
     return 0;
@@ -364,22 +435,21 @@ static int modeset_atomic_commit(int fd, struct modeset_dev *dev, uint32_t flags
 
     req = drmModeAtomicAlloc();
     if (!req) {
-    printf("Failed to allocate atomic request\n");
-    return -ENOMEM;
+        fprintf(stderr, "Failed to allocate atomic request\n");
+        return -ENOMEM;
     }
 
-    // 准备原子提交
     ret = modeset_atomic_prepare_commit(fd, dev, req);
     if (ret < 0) {
-    printf("Failed to prepare atomic commit\n");
-    drmModeAtomicFree(req);
-    return ret;
+        fprintf(stderr, "Failed to prepare atomic commit for plane %u\n", dev->plane.id);
+        drmModeAtomicFree(req);
+        return ret;
     }
 
-    // 执行原子提交，传入设备指针
     ret = drmModeAtomicCommit(fd, req, flags, dev);
     if (ret < 0) {
-        printf("Failed to commit atomic request: %s\n", strerror(errno));
+        fprintf(stderr, "Failed to commit atomic request for plane %u: %s\n",
+                dev->plane.id, strerror(errno));
     }
 
     drmModeAtomicFree(req);
@@ -403,16 +473,6 @@ static int modeset_atomic_modeset(int fd, struct modeset_dev *dev)
         return ret;
     }
 
-    // 测试提交不需要传递用户数据
-    flags = DRM_MODE_ATOMIC_TEST_ONLY | DRM_MODE_ATOMIC_ALLOW_MODESET;
-    ret = drmModeAtomicCommit(fd, req, flags, NULL);
-    if (ret < 0) {
-        printf("Test-only atomic commit failed: %s\n", strerror(errno));
-        drmModeAtomicFree(req);
-        return ret;
-    }
-
-    // 实际提交需要传递设备指针
     flags = DRM_MODE_ATOMIC_ALLOW_MODESET | DRM_MODE_PAGE_FLIP_EVENT;
     ret = drmModeAtomicCommit(fd, req, flags, dev);
     if (ret < 0) {
@@ -727,5 +787,3 @@ int main(int argc, char *argv[])
 
     return 0;
 }
-
-// CRTC
