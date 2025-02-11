@@ -431,10 +431,12 @@ static int modeset_atomic_commit(int fd, struct modeset_dev *dev, uint32_t flags
         return ret;
     }
 
+re_commit:
     ret = drmModeAtomicCommit(fd, req, flags, dev);
     if (ret < 0) {
         fprintf(stderr, "Failed to commit atomic request for plane %u: %s\n",
                 dev->plane.id, strerror(errno));
+        goto re_commit;
     }
 
     drmModeAtomicFree(req);
@@ -458,8 +460,8 @@ static int modeset_atomic_modeset(int fd, struct modeset_dev *dev)
         return ret;
     }
 
-    // 移除 modeset 标志，只保留页面翻转事件
-    flags = DRM_MODE_PAGE_FLIP_EVENT;
+    // 使用最小权限标志
+    flags = DRM_MODE_ATOMIC_NONBLOCK;
     ret = drmModeAtomicCommit(fd, req, flags, dev);
     if (ret < 0) {
         printf("Atomic modeset failed: %s\n", strerror(errno));
@@ -560,31 +562,31 @@ static void page_flip_handler(int fd, unsigned int frame,
     unsigned int crtc_id, void *data)
 {
     struct modeset_dev *dev = (struct modeset_dev *)data;
-    if (!dev) {
-        printf("Invalid device data in page flip handler\n");
-        return;
-    }
-
+    static int retry_count = 0;
+    
     printf("Page flip: frame=%u, crtc=%u, dev=%p\n", frame, crtc_id, dev);
-
-    // 标记页面翻转完成
+    
     dev->pflip_pending = false;
 
-    // 如果不是清理阶段，继续下一帧
     if (!dev->cleanup) {
-        // 更新矩形位置
         update_rect_positions(dev);
-
-        // 绘制新帧
         draw_rects(dev);
 
-        // 请求新的页面翻转
-        if (modeset_atomic_page_flip(fd, dev) < 0) {
-            printf("Failed to queue page flip\n");
-            return;
+        // 添加错误重试机制
+re_flip:
+        int ret = modeset_atomic_page_flip(fd, dev);
+        if (ret < 0) {
+            if (retry_count < 3) {
+                printf("Retrying page flip...\n");
+                retry_count++;
+                goto re_flip;
+            }
+            if (ret < 0) {
+                printf("Failed to queue page flip after retries\n");
+                return;
+            }
         }
-
-        // 切换前后缓冲区
+        retry_count = 0;
         dev->front_buf ^= 1;
         dev->pflip_pending = true;
     }
@@ -593,7 +595,7 @@ static void page_flip_handler(int fd, unsigned int frame,
 // 主绘制循环
 static void modeset_draw(int fd, struct modeset_dev *dev)
 {
-    struct pollfd fds[2];
+    struct pollfd fds[1];  // 只需要一个文件描述符
     int ret;
     
     // 完整初始化事件上下文
@@ -603,23 +605,21 @@ static void modeset_draw(int fd, struct modeset_dev *dev)
     ev.page_flip_handler2 = page_flip_handler;
     ev.vblank_handler = NULL;  // 明确设置为NULL
     
-    // 设置轮询描述符
-    fds[0].fd = 0;
+    // 只设置DRM事件的文件描述符
+    fds[0].fd = fd;
     fds[0].events = POLLIN;
-    fds[0].revents = 0;  // 初始化revents
-    fds[1].fd = fd;
-    fds[1].events = POLLIN;
-    fds[1].revents = 0;  // 初始化revents
+    fds[0].revents = 0;
 
     // 初始绘制
     update_rect_positions(dev);
     draw_rects(dev);
     
     // 执行初始页面翻转
+re_flip:
     ret = modeset_atomic_page_flip(fd, dev);
     if (ret) {
         fprintf(stderr, "Initial page flip failed: %s\n", strerror(errno));
-        return;
+        goto re_flip;
     }
     
     dev->front_buf ^= 1;
@@ -629,11 +629,8 @@ static void modeset_draw(int fd, struct modeset_dev *dev)
     while (1) {
         // 重置revents
         fds[0].revents = 0;
-        fds[1].revents = 0;
-        
-        std::cout << "loop 1" << std::endl;
 
-        ret = poll(fds, 2, -1);
+        ret = poll(fds, 1, -1);  // 只监听一个文件描述符
         if (ret < 0) {
             if (errno == EINTR)
                 continue;  // 处理中断
@@ -641,16 +638,7 @@ static void modeset_draw(int fd, struct modeset_dev *dev)
             break;
         }
 
-        std::cout << "loop 2" << std::endl;
-
         if (fds[0].revents & POLLIN) {
-            // 用户输入，退出循环
-            break;
-        }
-
-        std::cout << "loop 3" << std::endl;
-
-        if (fds[1].revents & POLLIN) {
             // DRM事件
             ret = drmHandleEvent(fd, &ev);
             if (ret != 0) {
@@ -658,8 +646,6 @@ static void modeset_draw(int fd, struct modeset_dev *dev)
                 break;
             }
         }
-
-        std::cout << "loop 4" << std::endl;
     }
 }
 
@@ -671,19 +657,19 @@ static void modeset_cleanup(int fd, struct modeset_dev *dev)
         .page_flip_handler2 = page_flip_handler,
     };
 
-    // 标记清理状态
     dev->cleanup = true;
 
-    // 等待pending的页面翻转完成
     while (dev->pflip_pending) {
         drmHandleEvent(fd, &ev);
     }
 
-    // 禁用CRTC
+    // 清理plane
     drmModeAtomicReq *req = drmModeAtomicAlloc();
     if (req) {
-        set_drm_object_property(req, &dev->crtc, "ACTIVE", 0);
-        drmModeAtomicCommit(fd, req, DRM_MODE_ATOMIC_ALLOW_MODESET, NULL);
+        // 只清理plane，不触碰CRTC
+        set_drm_object_property(req, &dev->plane, "FB_ID", 0);
+        set_drm_object_property(req, &dev->plane, "CRTC_ID", 0);
+        drmModeAtomicCommit(fd, req, DRM_MODE_ATOMIC_NONBLOCK, NULL);
         drmModeAtomicFree(req);
     }
 
