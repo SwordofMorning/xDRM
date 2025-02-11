@@ -378,48 +378,25 @@ static int modeset_atomic_prepare_commit(int fd, struct modeset_dev *dev,
     printf("Preparing atomic commit: plane=%u, crtc=%u, fb=%u\n",
            dev->plane.id, dev->crtc.id, buf->fb);
 
-    // 设置plane属性
+    // 只设置plane相关的属性，不设置CRTC和connector属性
     ret = set_drm_object_property(req, &dev->plane, "FB_ID", buf->fb);
-    if (ret < 0) {
-        fprintf(stderr, "Failed to set FB_ID property for plane %u\n", dev->plane.id);
-        return ret;
-    }
+    if (ret < 0) return ret;
 
     ret = set_drm_object_property(req, &dev->plane, "CRTC_ID", dev->crtc.id);
-    if (ret < 0) {
-        fprintf(stderr, "Failed to set CRTC_ID property for plane %u\n", dev->plane.id);
-        return ret;
-    }
+    if (ret < 0) return ret;
 
     // 设置plane的源区域
     ret = set_drm_object_property(req, &dev->plane, "SRC_X", 0);
     ret |= set_drm_object_property(req, &dev->plane, "SRC_Y", 0);
     ret |= set_drm_object_property(req, &dev->plane, "SRC_W", buf->width << 16);
     ret |= set_drm_object_property(req, &dev->plane, "SRC_H", buf->height << 16);
-    if (ret < 0) {
-        fprintf(stderr, "Failed to set source properties for plane %u\n", dev->plane.id);
-        return ret;
-    }
-
-    // 设置plane的目标区域
-    ret = set_drm_object_property(req, &dev->plane, "CRTC_X", 0);
-    ret |= set_drm_object_property(req, &dev->plane, "CRTC_Y", 0);
-    ret |= set_drm_object_property(req, &dev->plane, "CRTC_W", buf->width);
-    ret |= set_drm_object_property(req, &dev->plane, "CRTC_H", buf->height);
-    if (ret < 0) {
-        fprintf(stderr, "Failed to set CRTC properties for plane %u\n", dev->plane.id);
-        return ret;
-    }
+    if (ret < 0) return ret;
 
     // 设置plane的alpha和混合模式
     ret = set_drm_object_property(req, &dev->plane, "alpha", 0xFFFF);
     ret |= set_drm_object_property(req, &dev->plane, "pixel blend mode", 1);
-    if (ret < 0) {
-        fprintf(stderr, "Note: alpha blending properties not supported for plane %u\n", dev->plane.id);
-    }
 
-    // 设置plane的zpos
-    ret = set_drm_object_property(req, &dev->plane, "zpos", 1);
+    ret = set_drm_object_property(req, &dev->plane, "zpos", 0);
     if (ret < 0) {
         fprintf(stderr, "Note: zpos property not supported for plane %u\n", dev->plane.id);
     }
@@ -473,7 +450,8 @@ static int modeset_atomic_modeset(int fd, struct modeset_dev *dev)
         return ret;
     }
 
-    flags = DRM_MODE_ATOMIC_ALLOW_MODESET | DRM_MODE_PAGE_FLIP_EVENT;
+    // 移除 modeset 标志，只保留页面翻转事件
+    flags = DRM_MODE_PAGE_FLIP_EVENT;
     ret = drmModeAtomicCommit(fd, req, flags, dev);
     if (ret < 0) {
         printf("Atomic modeset failed: %s\n", strerror(errno));
