@@ -364,22 +364,22 @@ static int modeset_atomic_commit(int fd, struct modeset_dev *dev, uint32_t flags
 
     req = drmModeAtomicAlloc();
     if (!req) {
-    fprintf(stderr, "Failed to allocate atomic request\n");
+    printf("Failed to allocate atomic request\n");
     return -ENOMEM;
     }
 
     // 准备原子提交
     ret = modeset_atomic_prepare_commit(fd, dev, req);
     if (ret < 0) {
-    fprintf(stderr, "Failed to prepare atomic commit\n");
+    printf("Failed to prepare atomic commit\n");
     drmModeAtomicFree(req);
     return ret;
     }
 
-    // 执行原子提交
-    ret = drmModeAtomicCommit(fd, req, flags, NULL);
+    // 执行原子提交，传入设备指针
+    ret = drmModeAtomicCommit(fd, req, flags, dev);
     if (ret < 0) {
-    fprintf(stderr, "Failed to commit atomic request: %s\n", strerror(errno));
+        printf("Failed to commit atomic request: %s\n", strerror(errno));
     }
 
     drmModeAtomicFree(req);
@@ -392,32 +392,31 @@ static int modeset_atomic_modeset(int fd, struct modeset_dev *dev)
     int ret;
     uint32_t flags;
 
-    // 准备测试提交
     drmModeAtomicReq *req = drmModeAtomicAlloc();
     if (!req) {
-    return -ENOMEM;
+        return -ENOMEM;
     }
 
     ret = modeset_atomic_prepare_commit(fd, dev, req);
     if (ret < 0) {
-    drmModeAtomicFree(req);
-    return ret;
+        drmModeAtomicFree(req);
+        return ret;
     }
 
-    // 首先执行测试提交
+    // 测试提交不需要传递用户数据
     flags = DRM_MODE_ATOMIC_TEST_ONLY | DRM_MODE_ATOMIC_ALLOW_MODESET;
     ret = drmModeAtomicCommit(fd, req, flags, NULL);
     if (ret < 0) {
-    fprintf(stderr, "Test-only atomic commit failed: %s\n", strerror(errno));
-    drmModeAtomicFree(req);
-    return ret;
+        printf("Test-only atomic commit failed: %s\n", strerror(errno));
+        drmModeAtomicFree(req);
+        return ret;
     }
 
-    // 执行实际的模式设置
+    // 实际提交需要传递设备指针
     flags = DRM_MODE_ATOMIC_ALLOW_MODESET | DRM_MODE_PAGE_FLIP_EVENT;
-    ret = drmModeAtomicCommit(fd, req, flags, NULL);
+    ret = drmModeAtomicCommit(fd, req, flags, dev);
     if (ret < 0) {
-    fprintf(stderr, "Atomic modeset failed: %s\n", strerror(errno));
+        printf("Atomic modeset failed: %s\n", strerror(errno));
     }
 
     drmModeAtomicFree(req);
@@ -519,6 +518,8 @@ static void page_flip_handler(int fd, unsigned int frame,
         printf("Invalid device data in page flip handler\n");
         return;
     }
+
+    printf("Page flip: frame=%u, crtc=%u, dev=%p\n", frame, crtc_id, dev);
 
     // 标记页面翻转完成
     dev->pflip_pending = false;
@@ -726,3 +727,5 @@ int main(int argc, char *argv[])
 
     return 0;
 }
+
+// CRTC
