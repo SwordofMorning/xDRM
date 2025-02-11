@@ -13,6 +13,7 @@
 #include <xf86drmMode.h>
 #include "/home/xjt/_Workspace_/System/rk3588-linux/buildroot/output/rockchip_rk3588/host/aarch64-buildroot-linux-gnu/sysroot/usr/include/drm/drm_fourcc.h"
 #include <iostream>
+#include <sys/time.h>
 
 #define RECT_WIDTH 100
 #define RECT_HEIGHT 100
@@ -29,6 +30,57 @@ struct Rectangle {
     int velo_x, velo_y;
     uint32_t color;
 };
+
+// 帧率统计结构体
+struct fps_stats {
+    struct timeval last_time;    // 上一次统计的时间
+    struct timeval current_time; // 当前时间
+    int frame_count;            // 帧计数
+    float fps;                  // 当前帧率
+    float avg_fps;              // 平均帧率
+    long total_frames;          // 总帧数
+    long total_time;            // 总时间(ms)
+};
+
+// 初始化fps统计
+static void init_fps_stats(struct fps_stats *stats) {
+    gettimeofday(&stats->last_time, NULL);
+    stats->frame_count = 0;
+    stats->fps = 0.0f;
+    stats->avg_fps = 0.0f;
+    stats->total_frames = 0;
+    stats->total_time = 0;
+}
+
+// 更新fps统计
+static void update_fps_stats(struct fps_stats *stats) {
+    stats->frame_count++;
+    stats->total_frames++;
+    
+    gettimeofday(&stats->current_time, NULL);
+    
+    // 计算时间差（毫秒）
+    long time_diff = (stats->current_time.tv_sec - stats->last_time.tv_sec) * 1000 +
+                    (stats->current_time.tv_usec - stats->last_time.tv_usec) / 1000;
+    
+    // 每秒更新一次FPS
+    if (time_diff >= 1000) {
+        stats->fps = (float)stats->frame_count * 1000 / time_diff;
+        stats->total_time += time_diff;
+        stats->avg_fps = (float)stats->total_frames * 1000 / stats->total_time;
+        
+        // 打印FPS信息
+        printf("FPS: %.2f (Current) %.2f (Average) - Frames: %ld Time: %.2fs\n",
+               stats->fps,
+               stats->avg_fps,
+               stats->total_frames,
+               stats->total_time / 1000.0f);
+        
+        // 重置计数器
+        stats->frame_count = 0;
+        stats->last_time = stats->current_time;
+    }
+}
 
 struct drm_object {
     drmModeObjectProperties *props;
@@ -375,8 +427,7 @@ static int modeset_atomic_prepare_commit(int fd, struct modeset_dev *dev,
     struct modeset_buf *buf = &dev->bufs[dev->front_buf ^ 1];
     int ret;
 
-    printf("Preparing atomic commit: plane=%u, crtc=%u, fb=%u\n",
-           dev->plane.id, dev->crtc.id, buf->fb);
+    // printf("Preparing atomic commit: plane=%u, crtc=%u, fb=%u\n", dev->plane.id, dev->crtc.id, buf->fb);
 
     // 只设置必要的plane属性
     ret = set_drm_object_property(req, &dev->plane, "FB_ID", buf->fb);
@@ -559,7 +610,7 @@ static void page_flip_handler(int fd, unsigned int frame,
 {
     struct modeset_dev *dev = (struct modeset_dev *)data;
     
-    printf("Page flip: frame=%u, crtc=%u, dev=%p\n", frame, crtc_id, dev);
+    // printf("Page flip: frame=%u, crtc=%u, dev=%p\n", frame, crtc_id, dev);
     
     dev->pflip_pending = false;
 
@@ -582,17 +633,21 @@ static void page_flip_handler(int fd, unsigned int frame,
 // 主绘制循环
 static void modeset_draw(int fd, struct modeset_dev *dev)
 {
-    struct pollfd fds[1];  // 只需要一个文件描述符
+    struct pollfd fds[1];
     int ret;
+    struct fps_stats fps_stats;
     
-    // 完整初始化事件上下文
+    // 初始化事件上下文
     drmEventContext ev = {};
     memset(&ev, 0, sizeof(ev));
     ev.version = DRM_EVENT_CONTEXT_VERSION;
     ev.page_flip_handler2 = page_flip_handler;
-    ev.vblank_handler = NULL;  // 明确设置为NULL
+    ev.vblank_handler = NULL;
     
-    // 只设置DRM事件的文件描述符
+    // 初始化FPS统计
+    init_fps_stats(&fps_stats);
+    
+    // 设置DRM事件的文件描述符
     fds[0].fd = fd;
     fds[0].events = POLLIN;
     fds[0].revents = 0;
@@ -614,24 +669,25 @@ re_flip:
 
     // 主循环
     while (1) {
-        // 重置revents
         fds[0].revents = 0;
 
-        ret = poll(fds, 1, -1);  // 只监听一个文件描述符
+        ret = poll(fds, 1, -1);
         if (ret < 0) {
             if (errno == EINTR)
-                continue;  // 处理中断
+                continue;
             printf("poll failed: %s\n", strerror(errno));
             break;
         }
 
         if (fds[0].revents & POLLIN) {
-            // DRM事件
             ret = drmHandleEvent(fd, &ev);
             if (ret != 0) {
                 printf("drmHandleEvent failed: %s\n", strerror(errno));
                 break;
             }
+            
+            // 更新FPS统计
+            update_fps_stats(&fps_stats);
         }
     }
 }
