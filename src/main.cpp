@@ -392,10 +392,18 @@ static int modeset_atomic_prepare_commit(int fd, struct modeset_dev *dev,
     ret |= set_drm_object_property(req, &dev->plane, "SRC_H", buf->height << 16);
     if (ret < 0) return ret;
 
+    // 设置plane的目标区域（缩小显示区域，避免与Qt冲突）
+    ret = set_drm_object_property(req, &dev->plane, "CRTC_X", 0);
+    ret |= set_drm_object_property(req, &dev->plane, "CRTC_Y", 0);
+    ret |= set_drm_object_property(req, &dev->plane, "CRTC_W", buf->width);
+    ret |= set_drm_object_property(req, &dev->plane, "CRTC_H", buf->height);
+    if (ret < 0) return ret;
+
     // 设置plane的alpha和混合模式
     ret = set_drm_object_property(req, &dev->plane, "alpha", 0xFFFF);
     ret |= set_drm_object_property(req, &dev->plane, "pixel blend mode", 1);
 
+    // 设置更高的zpos，确保在Qt界面之上
     ret = set_drm_object_property(req, &dev->plane, "zpos", 0);
     if (ret < 0) {
         fprintf(stderr, "Note: zpos property not supported for plane %u\n", dev->plane.id);
