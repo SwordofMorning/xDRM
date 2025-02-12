@@ -293,13 +293,16 @@ static inline uint8_t clamp(int value)
     return value < 0 ? 0 : (value > 255 ? 255 : value);
 }
 
-static bool flag = true;
+static int frame_count = 0;
+#define COLOR_RED  0xFFFF0000
+#define COLOR_BLUE 0xFF0000FF
 
 // NV12转ARGB的转换函数
 static void nv12_to_argb(const uint8_t* nv12_data, uint32_t* argb_data,
     int width, int height)
 {
     const uint8_t* y_plane = nv12_data;
+    uint32_t current_color = (frame_count % 2) ? COLOR_RED : COLOR_BLUE;
 
     for (int i = 0; i < height; i++)
     {
@@ -307,17 +310,8 @@ static void nv12_to_argb(const uint8_t* nv12_data, uint32_t* argb_data,
         {
             int y_index = i * width + j;
             int y = y_plane[y_index];
-            // argb_data[i * width + j] = (0xFF << 24) | (y << 16) | (y << 8) | y;
-            if (flag)
-            {
-                argb_data[i * width + j] = 0xFF0000FF;
-                flag = false;
-            }
-            else
-            {
-                argb_data[i * width + j] = 0xFFFF0000;
-                flag = true;
-            }
+            argb_data[i * width + j] = (0xFF << 24) | (y << 16) | (y << 8) | y;
+            // argb_data[i * width + j] = current_color;
         }
     }
 }
@@ -718,6 +712,12 @@ static void page_flip_handler(int fd, unsigned int frame,
             if (ret >= 0) {
                 dev->front_buf ^= 1;
                 dev->pflip_pending = true;
+                
+                // 增加帧计数
+                frame_count++;
+                
+                // 可选：添加延时控制
+                usleep(16666); // 约60fps
             }
         }
     }
