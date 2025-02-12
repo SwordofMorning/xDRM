@@ -14,6 +14,23 @@
 #include "/home/xjt/_Workspace_/System/rk3588-linux/buildroot/output/rockchip_rk3588/host/aarch64-buildroot-linux-gnu/sysroot/usr/include/drm/drm_fourcc.h"
 #include <iostream>
 #include <sys/time.h>
+#include <sys/ipc.h>
+#include <sys/shm.h>
+#include <sys/sem.h>
+
+#define ALGO_SEM_KEY 0x0010
+#define ALGO_SHM_YUV_KEY 0x0011
+#define ALGO_SHM_FLOAT_KEY 0x0012
+#define ALGO_SHM_CSI_KEY 0x0013
+#define ALGO_SHM_ALGO_KEY 0x0021
+#define ALGO_CSI_SIZE (2592 * 1944 * 1.5)
+// 添加共享内存相关变量
+struct shared_memory {
+    int shmid;
+    void* addr;
+    int semid;
+};
+
 
 #define RECT_WIDTH 100
 #define RECT_HEIGHT 100
@@ -114,6 +131,8 @@ struct modeset_dev {
     bool cleanup;
 
     struct Rectangle rects[NUM_RECTS];
+
+    void* user_data;
 };
 
 static struct modeset_dev *modeset_list = NULL;
@@ -182,11 +201,11 @@ static int modeset_create_fb(int fd, struct modeset_buf *buf)
     struct drm_mode_map_dumb mreq;
     int ret;
 
-    // 创建哑缓冲区
+    // 创建ARGB缓冲区
     memset(&creq, 0, sizeof(creq));
     creq.width = buf->width;
     creq.height = buf->height;
-    creq.bpp = 32;
+    creq.bpp = 32;  // ARGB8888
     creq.flags = 0;
     
     ret = drmIoctl(fd, DRM_IOCTL_MODE_CREATE_DUMB, &creq);
@@ -198,7 +217,7 @@ static int modeset_create_fb(int fd, struct modeset_buf *buf)
     buf->size = creq.size;
     buf->handle = creq.handle;
 
-    // 创建帧缓冲区，使用plane支持的格式
+    // 创建framebuffer
     uint32_t handles[4] = {buf->handle};
     uint32_t pitches[4] = {buf->stride};
     uint32_t offsets[4] = {0};
@@ -212,7 +231,7 @@ static int modeset_create_fb(int fd, struct modeset_buf *buf)
         goto err_destroy;
     }
 
-    // 准备内存映射
+    // 映射内存
     memset(&mreq, 0, sizeof(mreq));
     mreq.handle = buf->handle;
     ret = drmIoctl(fd, DRM_IOCTL_MODE_MAP_DUMB, &mreq);
@@ -231,7 +250,6 @@ static int modeset_create_fb(int fd, struct modeset_buf *buf)
         goto err_fb;
     }
 
-    memset(buf->map, 0, buf->size);
     return 0;
 
 err_fb:
@@ -242,6 +260,66 @@ err_destroy:
     dreq.handle = buf->handle;
     drmIoctl(fd, DRM_IOCTL_MODE_DESTROY_DUMB, &dreq);
     return ret;
+}
+
+static int init_shared_memory(struct shared_memory *shm)
+{
+    // 获取共享内存
+    shm->shmid = shmget(ALGO_SHM_CSI_KEY, ALGO_CSI_SIZE, 0666);
+    if (shm->shmid < 0) {
+        perror("shmget failed");
+        return -1;
+    }
+
+    // 映射共享内存
+    shm->addr = shmat(shm->shmid, NULL, 0);
+    if (shm->addr == (void*)-1) {
+        perror("shmat failed");
+        return -1;
+    }
+
+    // 获取信号量
+    shm->semid = semget(ALGO_SEM_KEY, 1, 0666);
+    if (shm->semid < 0) {
+        perror("semget failed");
+        return -1;
+    }
+
+    return 0;
+}
+
+static inline uint8_t clamp(int value)
+{
+    return value < 0 ? 0 : (value > 255 ? 255 : value);
+}
+
+// NV12转ARGB的转换函数
+static void nv12_to_argb(const uint8_t* nv12_data, uint32_t* argb_data,
+                        int width, int height)
+{
+    const uint8_t* y_plane = nv12_data;
+    const uint8_t* uv_plane = nv12_data + width * height;
+    
+    for (int y = 0; y < height; y++) {
+        for (int x = 0; x < width; x++) {
+            int y_val = y_plane[y * width + x];
+            int u_val = uv_plane[(y/2) * width + (x/2) * 2];
+            int v_val = uv_plane[(y/2) * width + (x/2) * 2 + 1];
+
+            // YUV to RGB conversion
+            int c = y_val - 16;
+            int d = u_val - 128;
+            int e = v_val - 128;
+
+            // 使用BT.601标准的转换系数
+            int r = clamp((298 * c + 409 * e + 128) >> 8);
+            int g = clamp((298 * c - 100 * d - 208 * e + 128) >> 8);
+            int b = clamp((298 * c + 516 * d + 128) >> 8);
+
+            // 打包为ARGB格式（0xFF作为alpha通道）
+            argb_data[y * width + x] = (0xFF << 24) | (r << 16) | (g << 8) | b;
+        }
+    }
 }
 
 // 销毁帧缓冲区
@@ -349,6 +427,11 @@ static int modeset_setup_dev(int fd, struct modeset_dev *dev)
     dev->connector.id = CONN_ID;
     dev->crtc.id = CRTC_ID;
     dev->plane.id = PLANE_ID;
+
+    dev->bufs[0].width = 2592;  // 使用实际的图像宽度
+    dev->bufs[0].height = 1944; // 使用实际的图像高度
+    dev->bufs[1].width = 2592;
+    dev->bufs[1].height = 1944;
 
     // 检查plane能力
     ret = check_plane_capabilities(fd, dev);
@@ -609,24 +692,35 @@ static void page_flip_handler(int fd, unsigned int frame,
     unsigned int crtc_id, void *data)
 {
     struct modeset_dev *dev = (struct modeset_dev *)data;
-    
-    // printf("Page flip: frame=%u, crtc=%u, dev=%p\n", frame, crtc_id, dev);
+    struct shared_memory *shm = (struct shared_memory *)dev->user_data;
+    struct sembuf sem_op;
     
     dev->pflip_pending = false;
 
     if (!dev->cleanup) {
-        update_rect_positions(dev);
-        draw_rects(dev);
+        // 等待信号量
+        sem_op.sem_num = 0;
+        sem_op.sem_op = -1;
+        sem_op.sem_flg = 0;
+        if (semop(shm->semid, &sem_op, 1) >= 0) {
+            // 获取当前缓冲区
+            struct modeset_buf *buf = &dev->bufs[dev->front_buf ^ 1];
+            
+            // 转换并复制图像数据
+            nv12_to_argb((uint8_t*)shm->addr, (uint32_t*)buf->map,
+                        buf->width, buf->height);
 
-        // 使用同步方式提交
-        int ret = modeset_atomic_page_flip(fd, dev);
-        if (ret < 0) {
-            printf("Failed to queue page flip\n");
-            return;
+            // 释放信号量
+            sem_op.sem_op = 1;
+            semop(shm->semid, &sem_op, 1);
+
+            // 提交新帧
+            int ret = modeset_atomic_page_flip(fd, dev);
+            if (ret >= 0) {
+                dev->front_buf ^= 1;
+                dev->pflip_pending = true;
+            }
         }
-        
-        dev->front_buf ^= 1;
-        dev->pflip_pending = true;
     }
 }
 
@@ -742,6 +836,14 @@ int main(int argc, char *argv[])
 {
     int fd, ret;
     struct modeset_dev *dev;
+    struct shared_memory shm;
+
+    // 初始化共享内存
+    ret = init_shared_memory(&shm);
+    if (ret < 0) {
+        fprintf(stderr, "Failed to init shared memory\n");
+        return -1;
+    }
 
     std::cout << "Open DRM" << std::endl;
 
@@ -791,11 +893,14 @@ int main(int argc, char *argv[])
     std::cout << "Main loop" << std::endl;
 
     // 运行主绘制循环
+    dev->user_data = &shm;
     modeset_draw(fd, dev);
 
     std::cout << "Out loop" << std::endl;
 
     // 清理
+    if (shm.addr != (void*)-1)
+        shmdt(shm.addr);
     modeset_cleanup(fd, dev);
     free(dev);
     close(fd);
