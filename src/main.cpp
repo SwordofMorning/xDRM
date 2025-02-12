@@ -293,31 +293,31 @@ static inline uint8_t clamp(int value)
     return value < 0 ? 0 : (value > 255 ? 255 : value);
 }
 
+bool flag = true;
+
 // NV12转ARGB的转换函数
 static void nv12_to_argb(const uint8_t* nv12_data, uint32_t* argb_data,
-                        int width, int height)
+    int width, int height)
 {
     const uint8_t* y_plane = nv12_data;
-    const uint8_t* uv_plane = nv12_data + width * height;
-    
-    for (int y = 0; y < height; y++) {
-        for (int x = 0; x < width; x++) {
-            int y_val = y_plane[y * width + x];
-            int u_val = uv_plane[(y/2) * width + (x/2) * 2];
-            int v_val = uv_plane[(y/2) * width + (x/2) * 2 + 1];
 
-            // YUV to RGB conversion
-            int c = y_val - 16;
-            int d = u_val - 128;
-            int e = v_val - 128;
-
-            // 使用BT.601标准的转换系数
-            int r = clamp((298 * c + 409 * e + 128) >> 8);
-            int g = clamp((298 * c - 100 * d - 208 * e + 128) >> 8);
-            int b = clamp((298 * c + 516 * d + 128) >> 8);
-
-            // 打包为ARGB格式（0xFF作为alpha通道）
-            argb_data[y * width + x] = (0xFF << 24) | (r << 16) | (g << 8) | b;
+    for (int i = 0; i < height; i++)
+    {
+        for (int j = 0; j < width; j++)
+        {
+            int y_index = i * width + j;
+            int y = y_plane[y_index];
+            // argb_data[i * width + j] = (0xFF << 24) | (y << 16) | (y << 8) | y;
+            if (flag)
+            {
+                argb_data[i * width + j] = 0xFFFFFFFF;
+                flag = false;
+            }
+            else
+            {
+                argb_data[i * width + j] = 0x00000000;
+                flag = true;
+            }
         }
     }
 }
@@ -707,8 +707,7 @@ static void page_flip_handler(int fd, unsigned int frame,
             struct modeset_buf *buf = &dev->bufs[dev->front_buf ^ 1];
             
             // 转换并复制图像数据
-            nv12_to_argb((uint8_t*)shm->addr, (uint32_t*)buf->map,
-                        buf->width, buf->height);
+            nv12_to_argb((uint8_t*)shm->addr, (uint32_t*)buf->map, buf->width, buf->height);
 
             // 释放信号量
             sem_op.sem_op = 1;
