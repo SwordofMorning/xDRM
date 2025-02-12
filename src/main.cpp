@@ -293,7 +293,7 @@ static inline uint8_t clamp(int value)
     return value < 0 ? 0 : (value > 255 ? 255 : value);
 }
 
-bool flag = true;
+static bool flag = true;
 
 // NV12转ARGB的转换函数
 static void nv12_to_argb(const uint8_t* nv12_data, uint32_t* argb_data,
@@ -310,12 +310,12 @@ static void nv12_to_argb(const uint8_t* nv12_data, uint32_t* argb_data,
             // argb_data[i * width + j] = (0xFF << 24) | (y << 16) | (y << 8) | y;
             if (flag)
             {
-                argb_data[i * width + j] = 0xFFFFFFFF;
+                argb_data[i * width + j] = 0xFF0000FF;
                 flag = false;
             }
             else
             {
-                argb_data[i * width + j] = 0x00000000;
+                argb_data[i * width + j] = 0xFFFF0000;
                 flag = true;
             }
         }
