@@ -17,6 +17,7 @@
 #include <sys/ipc.h>
 #include <sys/shm.h>
 #include <sys/sem.h>
+#include <math.h>
 
 #define ALGO_SEM_KEY 0x0010
 #define ALGO_SHM_YUV_KEY 0x0011
@@ -297,24 +298,113 @@ static int frame_count = 0;
 #define COLOR_RED  0xFFFF0000
 #define COLOR_BLUE 0xFF0000FF
 
-// NV12转ARGB的转换函数
-static void nv12_to_argb(const uint8_t* nv12_data, uint32_t* argb_data,
-    int width, int height)
+// 直接生成ARGB测试图案
+static void generate_test_pattern(uint32_t* argb_data, int width, int height, int frame_count) 
 {
-    const uint8_t* y_plane = nv12_data;
-    uint32_t current_color = (frame_count % 2) ? COLOR_RED : COLOR_BLUE;
-
-    for (int i = 0; i < height; i++)
+    // 简化的时间因子
+    int offset = frame_count * 4;  // 增加速度
+    
+    for(int y = 0; y < height; y++) 
     {
-        for (int j = 0; j < width; j++)
+        for(int x = 0; x < width; x++) 
         {
-            int y_index = i * width + j;
-            int y = y_plane[y_index];
-            argb_data[i * width + j] = (0xFF << 24) | (y << 16) | (y << 8) | y;
-            // argb_data[i * width + j] = current_color;
+            // 生成RGB分量
+            uint8_t r = (x + offset) & 0xFF;
+            uint8_t g = (y + offset) & 0xFF;
+            uint8_t b = (x + y + offset) & 0xFF;
+            
+            // 直接组装ARGB
+            argb_data[y * width + x] = (0xFF << 24) | (r << 16) | (g << 8) | b;
         }
     }
 }
+
+// 彩条图案
+static void generate_color_bars(uint32_t* argb_data, int width, int height, int frame_count)
+{
+    int bar_width = width / 8;
+    int offset = frame_count * 8;  // 控制移动速度
+    
+    for(int y = 0; y < height; y++)
+    {
+        for(int x = 0; x < width; x++)
+        {
+            int bar = ((x + offset) / bar_width) % 8;
+            uint32_t color;
+            
+            switch(bar)
+            {
+                case 0: color = 0xFFFFFFFF; break; // 白
+                case 1: color = 0xFFFFFF00; break; // 黄
+                case 2: color = 0xFF00FFFF; break; // 青
+                case 3: color = 0xFF00FF00; break; // 绿
+                case 4: color = 0xFFFF00FF; break; // 品红
+                case 5: color = 0xFFFF0000; break; // 红
+                case 6: color = 0xFF0000FF; break; // 蓝
+                case 7: color = 0xFF000000; break; // 黑
+            }
+            
+            argb_data[y * width + x] = color;
+        }
+    }
+}
+
+// 棋盘图案
+static void generate_checkerboard(uint32_t* argb_data, int width, int height, int frame_count)
+{
+    int square_size = 64;  // 更大的方格
+    int offset = frame_count * 4;  // 移动速度
+    
+    for(int y = 0; y < height; y++)
+    {
+        for(int x = 0; x < width; x++)
+        {
+            int px = (x + offset) / square_size;
+            int py = (y + offset) / square_size;
+            
+            uint32_t color = ((px + py) & 1) ? 0xFFFFFFFF : 0xFF000000;
+            argb_data[y * width + x] = color;
+        }
+    }
+}
+
+// 修改后的nv12_to_argb函数
+static void nv12_to_argb(const uint8_t* nv12_data, uint32_t* argb_data,
+    int width, int height)
+{
+    // 每60帧切换一次模式
+    switch((frame_count / 60) % 3) {
+        case 0:
+            generate_test_pattern(argb_data, width, height, frame_count);
+            break;
+        case 1:
+            generate_color_bars(argb_data, width, height, frame_count);
+            break;
+        case 2:
+            generate_checkerboard(argb_data, width, height, frame_count);
+            break;
+    }
+    frame_count++;
+}
+
+// NV12转ARGB的转换函数
+// static void nv12_to_argb(const uint8_t* nv12_data, uint32_t* argb_data,
+//     int width, int height)
+// {
+//     const uint8_t* y_plane = nv12_data;
+//     uint32_t current_color = (frame_count % 2) ? COLOR_RED : COLOR_BLUE;
+
+//     for (int i = 0; i < height; i++)
+//     {
+//         for (int j = 0; j < width; j++)
+//         {
+//             // int y_index = i * width + j;
+//             // int y = y_plane[y_index];
+//             // argb_data[i * width + j] = (0xFF << 24) | (y << 16) | (y << 8) | y;
+//             argb_data[i * width + j] = current_color;
+//         }
+//     }
+// }
 
 // 销毁帧缓冲区
 static void modeset_destroy_fb(int fd, struct modeset_buf *buf)
