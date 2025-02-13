@@ -25,11 +25,16 @@
 #define ALGO_SHM_CSI_KEY 0x0013
 #define ALGO_SHM_ALGO_KEY 0x0021
 #define ALGO_CSI_SIZE (2592 * 1944 * 1.5)
+#define ALGO_WIDTH 640
+#define ALGO_HEIGHT 512
+#define ALGO_YUV_SIZE (ALGO_WIDTH * ALGO_HEIGHT * 3 / 2)
 // 添加共享内存相关变量
 struct shared_memory {
     int shmid;
     void* addr;
     int semid;
+    int width;
+    int height;
 };
 
 
@@ -265,8 +270,11 @@ err_destroy:
 
 static int init_shared_memory(struct shared_memory *shm)
 {
-    // 获取共享内存
-    shm->shmid = shmget(ALGO_SHM_CSI_KEY, ALGO_CSI_SIZE, 0666);
+    shm->width = ALGO_WIDTH;
+    shm->height = ALGO_HEIGHT;
+    
+    // 获取YUV共享内存
+    shm->shmid = shmget(ALGO_SHM_YUV_KEY, ALGO_YUV_SIZE, 0666);
     if (shm->shmid < 0) {
         perror("shmget failed");
         return -1;
@@ -368,8 +376,10 @@ static void generate_checkerboard(uint32_t* argb_data, int width, int height, in
     }
 }
 
-// 修改后的nv12_to_argb函数
-static void nv12_to_argb(const uint8_t* nv12_data, uint32_t* argb_data,
+
+#if 0
+// Test Patten
+static void nv12_to_argb(const uint8_t* nv12_data, uint32_t* argb_data, 
     int width, int height)
 {
     // 每60帧切换一次模式
@@ -386,25 +396,26 @@ static void nv12_to_argb(const uint8_t* nv12_data, uint32_t* argb_data,
     }
     frame_count++;
 }
-
+#else
 // NV12转ARGB的转换函数
-// static void nv12_to_argb(const uint8_t* nv12_data, uint32_t* argb_data,
-//     int width, int height)
-// {
-//     const uint8_t* y_plane = nv12_data;
-//     uint32_t current_color = (frame_count % 2) ? COLOR_RED : COLOR_BLUE;
+static void nv12_to_argb(const uint8_t* nv12_data, uint32_t* argb_data,
+    int width, int height)
+{
+    const uint8_t* y_plane = nv12_data;
+    uint32_t current_color = (frame_count % 2) ? COLOR_RED : COLOR_BLUE;
 
-//     for (int i = 0; i < height; i++)
-//     {
-//         for (int j = 0; j < width; j++)
-//         {
-//             // int y_index = i * width + j;
-//             // int y = y_plane[y_index];
-//             // argb_data[i * width + j] = (0xFF << 24) | (y << 16) | (y << 8) | y;
-//             argb_data[i * width + j] = current_color;
-//         }
-//     }
-// }
+    for (int i = 0; i < height; i++)
+    {
+        for (int j = 0; j < width; j++)
+        {
+            int y_index = i * width + j;
+            int y = y_plane[y_index];
+            argb_data[i * width + j] = (0xFF << 24) | (y << 16) | (y << 8) | y;
+            // argb_data[i * width + j] = current_color;
+        }
+    }
+}
+#endif
 
 // 销毁帧缓冲区
 static void modeset_destroy_fb(int fd, struct modeset_buf *buf)
@@ -512,11 +523,6 @@ static int modeset_setup_dev(int fd, struct modeset_dev *dev)
     dev->crtc.id = CRTC_ID;
     dev->plane.id = PLANE_ID;
 
-    dev->bufs[0].width = 2592;  // 使用实际的图像宽度
-    dev->bufs[0].height = 1944; // 使用实际的图像高度
-    dev->bufs[1].width = 2592;
-    dev->bufs[1].height = 1944;
-
     // 检查plane能力
     ret = check_plane_capabilities(fd, dev);
     if (ret < 0) {
@@ -539,10 +545,15 @@ static int modeset_setup_dev(int fd, struct modeset_dev *dev)
     }
     
     memcpy(&dev->mode, &conn->modes[0], sizeof(dev->mode));
-    dev->bufs[0].width = conn->modes[0].hdisplay;
-    dev->bufs[0].height = conn->modes[0].vdisplay;
-    dev->bufs[1].width = conn->modes[0].hdisplay;
-    dev->bufs[1].height = conn->modes[0].vdisplay;
+    // dev->bufs[0].width = conn->modes[0].hdisplay;
+    // dev->bufs[0].height = conn->modes[0].vdisplay;
+    // dev->bufs[1].width = conn->modes[0].hdisplay;
+    // dev->bufs[1].height = conn->modes[0].vdisplay;
+
+    dev->bufs[0].width = ALGO_WIDTH;   // 使用 640
+    dev->bufs[0].height = ALGO_HEIGHT;  // 使用 512
+    dev->bufs[1].width = ALGO_WIDTH;
+    dev->bufs[1].height = ALGO_HEIGHT;
 
     // 创建模式blob
     ret = drmModeCreatePropertyBlob(fd, &dev->mode, sizeof(dev->mode),
@@ -566,14 +577,14 @@ static int modeset_setup_dev(int fd, struct modeset_dev *dev)
     if (ret)
         goto err_fb0;
 
-    // 初始化矩形
-    for (int i = 0; i < NUM_RECTS; ++i) {
-        dev->rects[i].x = rand() % (dev->bufs[0].width - RECT_WIDTH);
-        dev->rects[i].y = rand() % (dev->bufs[0].height - RECT_HEIGHT);
-        dev->rects[i].velo_x = (rand() % 10) + 5;
-        dev->rects[i].velo_y = (rand() % 10) + 5;
-        dev->rects[i].color = 0x80FFFFFF;  // 半透明白色
-    }
+    // // 初始化矩形
+    // for (int i = 0; i < NUM_RECTS; ++i) {
+    //     dev->rects[i].x = rand() % (dev->bufs[0].width - RECT_WIDTH);
+    //     dev->rects[i].y = rand() % (dev->bufs[0].height - RECT_HEIGHT);
+    //     dev->rects[i].velo_x = (rand() % 10) + 5;
+    //     dev->rects[i].velo_y = (rand() % 10) + 5;
+    //     dev->rects[i].color = 0x80FFFFFF;  // 半透明白色
+    // }
 
     drmModeFreeConnector(conn);
     return 0;
@@ -594,8 +605,6 @@ static int modeset_atomic_prepare_commit(int fd, struct modeset_dev *dev,
     struct modeset_buf *buf = &dev->bufs[dev->front_buf ^ 1];
     int ret;
 
-    // printf("Preparing atomic commit: plane=%u, crtc=%u, fb=%u\n", dev->plane.id, dev->crtc.id, buf->fb);
-
     // 只设置必要的plane属性
     ret = set_drm_object_property(req, &dev->plane, "FB_ID", buf->fb);
     if (ret < 0) return ret;
@@ -604,19 +613,36 @@ static int modeset_atomic_prepare_commit(int fd, struct modeset_dev *dev,
     if (ret < 0) return ret;
 
     // 源和目标区域设置
+    // ret = set_drm_object_property(req, &dev->plane, "SRC_X", 0);
+    // ret |= set_drm_object_property(req, &dev->plane, "SRC_Y", 0);
+    // ret |= set_drm_object_property(req, &dev->plane, "SRC_W", buf->width << 16);
+    // ret |= set_drm_object_property(req, &dev->plane, "SRC_H", buf->height << 16);
+    // if (ret < 0) return ret;
+
+    // ret = set_drm_object_property(req, &dev->plane, "CRTC_X", 0);
+    // ret |= set_drm_object_property(req, &dev->plane, "CRTC_Y", 0);
+    // ret |= set_drm_object_property(req, &dev->plane, "CRTC_W", buf->width);
+    // ret |= set_drm_object_property(req, &dev->plane, "CRTC_H", buf->height);
+    // if (ret < 0) return ret;
+
     ret = set_drm_object_property(req, &dev->plane, "SRC_X", 0);
     ret |= set_drm_object_property(req, &dev->plane, "SRC_Y", 0);
-    ret |= set_drm_object_property(req, &dev->plane, "SRC_W", buf->width << 16);
-    ret |= set_drm_object_property(req, &dev->plane, "SRC_H", buf->height << 16);
+    ret |= set_drm_object_property(req, &dev->plane, "SRC_W", ALGO_WIDTH << 16);
+    ret |= set_drm_object_property(req, &dev->plane, "SRC_H", ALGO_HEIGHT << 16);
     if (ret < 0) return ret;
 
-    ret = set_drm_object_property(req, &dev->plane, "CRTC_X", 0);
-    ret |= set_drm_object_property(req, &dev->plane, "CRTC_Y", 0);
-    ret |= set_drm_object_property(req, &dev->plane, "CRTC_W", buf->width);
-    ret |= set_drm_object_property(req, &dev->plane, "CRTC_H", buf->height);
-    if (ret < 0) return ret;
+    // 设置显示区域（居中显示）
+    int disp_width = 1080;
+    int disp_height = 1920;
+    int x_offset = (disp_width - ALGO_WIDTH) / 2;
+    int y_offset = (disp_height - ALGO_HEIGHT) / 2;
 
-    // 设置更高的zpos
+    // 修改显示属性
+    ret = set_drm_object_property(req, &dev->plane, "CRTC_X", x_offset);
+    ret |= set_drm_object_property(req, &dev->plane, "CRTC_Y", y_offset);
+    ret |= set_drm_object_property(req, &dev->plane, "CRTC_W", ALGO_WIDTH);
+    ret |= set_drm_object_property(req, &dev->plane, "CRTC_H", ALGO_HEIGHT);
+
     ret = set_drm_object_property(req, &dev->plane, "zpos", 0);
     if (ret < 0) {
         fprintf(stderr, "Note: zpos property not supported\n");
@@ -791,7 +817,7 @@ static void page_flip_handler(int fd, unsigned int frame,
             struct modeset_buf *buf = &dev->bufs[dev->front_buf ^ 1];
             
             // 转换并复制图像数据
-            nv12_to_argb((uint8_t*)shm->addr, (uint32_t*)buf->map, buf->width, buf->height);
+            nv12_to_argb((uint8_t*)shm->addr, (uint32_t*)buf->map, 640, 512);
 
             // 释放信号量
             sem_op.sem_op = 1;
