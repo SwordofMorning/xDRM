@@ -402,16 +402,37 @@ static void nv12_to_argb(const uint8_t* nv12_data, uint32_t* argb_data,
     int width, int height)
 {
     const uint8_t* y_plane = nv12_data;
-    uint32_t current_color = (frame_count % 2) ? COLOR_RED : COLOR_BLUE;
+    const uint8_t* uv_plane = nv12_data + (width * height);
 
     for (int i = 0; i < height; i++)
     {
         for (int j = 0; j < width; j++)
         {
-            int y_index = i * width + j;
-            int y = y_plane[y_index];
-            argb_data[i * width + j] = (0xFF << 24) | (y << 16) | (y << 8) | y;
-            // argb_data[i * width + j] = current_color;
+            // 获取Y值
+            int y = y_plane[i * width + j];
+            
+            // 获取UV值（每2x2像素共享一组UV）
+            int u = uv_plane[(i/2) * width + (j/2) * 2];
+            int v = uv_plane[(i/2) * width + (j/2) * 2 + 1];
+
+            // YUV转RGB转换
+            // 将YUV值转换到正确的范围
+            int y_tmp = (y - 16) * 298;
+            int u_tmp = u - 128;
+            int v_tmp = v - 128;
+
+            // 根据BT.601标准进行转换
+            int r = (y_tmp + 409 * v_tmp + 128) >> 8;
+            int g = (y_tmp - 100 * u_tmp - 208 * v_tmp + 128) >> 8;
+            int b = (y_tmp + 516 * u_tmp + 128) >> 8;
+
+            // 限制RGB值在0-255范围内
+            r = clamp(r);
+            g = clamp(g);
+            b = clamp(b);
+
+            // 打包为ARGB
+            argb_data[i * width + j] = (0xFF << 24) | (r << 16) | (g << 8) | b;
         }
     }
 }
