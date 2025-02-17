@@ -19,6 +19,7 @@
 #include <sys/shm.h>
 #include <sys/sem.h>
 #include <math.h>
+#include <pthread.h>
 #include "../conf/conf.h"
 
 #ifdef __cplusplus
@@ -65,6 +66,10 @@ struct modeset_dev
     bool cleanup;
 
     void* user_data;
+
+    uint32_t *data_buffer;
+    pthread_mutex_t buffer_mutex;
+    bool buffer_updated;
 };
 
 extern struct modeset_dev *modeset_list;
@@ -78,12 +83,14 @@ int modeset_atomic_modeset(int fd, struct modeset_dev *dev);
 
 void modeset_cleanup(int fd, struct modeset_dev *dev);
 
-void modeset_draw(int fd, struct modeset_dev *dev);
-
 int xDRM_Init(struct modeset_dev **dev, uint32_t conn_id, uint32_t crtc_id, uint32_t plane_id, 
     uint32_t source_width, uint32_t source_height, int x_offset, int y_offset);
 
 void xDRM_Exit(int fd, struct modeset_dev *dev);
+
+void xDRM_Draw(int fd, struct modeset_dev *dev);
+
+int xDRM_Push(struct modeset_dev *dev, uint32_t *data, size_t size);
 
 #ifdef __cplusplus
 }

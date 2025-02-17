@@ -484,6 +484,16 @@ int modeset_setup_dev(int fd, struct modeset_dev *dev, uint32_t conn_id, uint32_
     if (ret)
         goto err_fb0;
 
+
+    // Step 8 : User buffer and mutex
+    dev->data_buffer = (uint32_t*)malloc(source_width * source_height * sizeof(uint32_t));
+    if (!dev->data_buffer) {
+        return -ENOMEM;
+    }
+
+    pthread_mutex_init(&dev->buffer_mutex, NULL);
+    dev->buffer_updated = false;
+
     drmModeFreeConnector(conn);
     return 0;
 
@@ -559,17 +569,18 @@ void page_flip_handler(int fd, unsigned int frame, unsigned int sec, unsigned in
     struct sembuf sem_op;
     
     dev->pflip_pending = false;
-     
+
+#if __ENABLE_PATTERN__
     if (!dev->cleanup)
     {
         // get current buffer
         struct modeset_buf *buf = &dev->bufs[dev->front_buf ^ 1];
 
         // push data
-        pattern(NULL, (uint32_t*)buf->map, 640, 512);
+        pattern(NULL, (uint32_t*)buf->map, dev->src_width, dev->src_height);
 
         // commit
-        int ret = modeset_atomic_page_flip(fd, dev, 640, 512, 0, 0);
+        int ret = modeset_atomic_page_flip(fd, dev, dev->src_width, dev->src_height, dev->x_offset, dev->y_offset);
         if (ret >= 0)
         {
             dev->front_buf ^= 1;
@@ -577,71 +588,35 @@ void page_flip_handler(int fd, unsigned int frame, unsigned int sec, unsigned in
 
             frame_count_test_pattern++;
 
+            // @attention, control 60fps.
             usleep(16666);
         }
     }
-}
-
-void modeset_draw(int fd, struct modeset_dev *dev)
-{
-    struct pollfd fds[1];
-    int ret;
-    struct fps_stats fps_stats;
-    
-    // Init context
-    drmEventContext ev = {};
-    memset(&ev, 0, sizeof(ev));
-    ev.version = DRM_EVENT_CONTEXT_VERSION;
-    ev.page_flip_handler2 = page_flip_handler;
-    ev.vblank_handler = NULL;
-    
-    // Init FPS
-    xDRM_Init_FPS_Stats(&fps_stats);
-    
-    // Set DRM file descriptor
-    fds[0].fd = fd;
-    fds[0].events = POLLIN;
-    fds[0].revents = 0;
-    
-    // execute first atomic page flip
-re_flip:
-    ret = modeset_atomic_page_flip(fd, dev, dev->src_width, dev->src_height, dev->x_offset, dev->y_offset);
-    if (ret)
+#else
+    if (!dev->cleanup)
     {
-        fprintf(stderr, "Initial page flip failed: %s\n", strerror(errno));
-        goto re_flip;
-    }
+        struct modeset_buf *buf = &dev->bufs[dev->front_buf ^ 1];
 
-    dev->front_buf ^= 1;
-    dev->pflip_pending = true;
-
-    // main loop
-    while (1)
-    {
-        fds[0].revents = 0;
-
-        ret = poll(fds, 1, -1);
-        if (ret < 0)
+        pthread_mutex_lock(&dev->buffer_mutex);
+        if (dev->buffer_updated)
         {
-            if (errno == EINTR)
-                continue;
-            printf("poll failed: %s\n", strerror(errno));
-            break;
+            memcpy(buf->map, dev->data_buffer, 
+                dev->src_width * dev->src_height * sizeof(uint32_t));
+            dev->buffer_updated = false;
         }
+        pthread_mutex_unlock(&dev->buffer_mutex);
 
-        if (fds[0].revents & POLLIN)
+        // commit
+        int ret = modeset_atomic_page_flip(fd, dev, dev->src_width, 
+                                        dev->src_height, dev->x_offset, dev->y_offset);
+        if (ret >= 0)
         {
-            ret = drmHandleEvent(fd, &ev);
-            if (ret != 0)
-            {
-                printf("drmHandleEvent failed: %s\n", strerror(errno));
-                break;
-            }
-
-            // Update FPS datas
-            xDRM_Update_FPS_Stats(&fps_stats);
+            dev->front_buf ^= 1;
+            dev->pflip_pending = true;
+            usleep(16666);
         }
     }
+#endif
 }
 
 void modeset_cleanup(int fd, struct modeset_dev *dev)
@@ -689,6 +664,13 @@ void modeset_cleanup(int fd, struct modeset_dev *dev)
     drmModeFreeObjectProperties(dev->connector.props);
     drmModeFreeObjectProperties(dev->crtc.props);
     drmModeFreeObjectProperties(dev->plane.props);
+
+    // mutex and user buffer
+    if (dev->data_buffer) {
+        free(dev->data_buffer);
+        dev->data_buffer = NULL;
+    }
+    pthread_mutex_destroy(&dev->buffer_mutex);
 }
 
 /* ====================================================================================================================== */
@@ -753,4 +735,82 @@ void xDRM_Exit(int fd, struct modeset_dev *dev)
     modeset_cleanup(fd, dev);
     free(dev);
     close(fd);
+}
+
+void xDRM_Draw(int fd, struct modeset_dev *dev)
+{
+    struct pollfd fds[1];
+    int ret;
+    struct fps_stats fps_stats;
+    
+    // Init context
+    drmEventContext ev = {};
+    memset(&ev, 0, sizeof(ev));
+    ev.version = DRM_EVENT_CONTEXT_VERSION;
+    ev.page_flip_handler2 = page_flip_handler;
+    ev.vblank_handler = NULL;
+    
+    // Init FPS
+    xDRM_Init_FPS_Stats(&fps_stats);
+    
+    // Set DRM file descriptor
+    fds[0].fd = fd;
+    fds[0].events = POLLIN;
+    fds[0].revents = 0;
+    
+    // execute first atomic page flip
+re_flip:
+    ret = modeset_atomic_page_flip(fd, dev, dev->src_width, dev->src_height, dev->x_offset, dev->y_offset);
+    if (ret)
+    {
+        fprintf(stderr, "Initial page flip failed: %s\n", strerror(errno));
+        goto re_flip;
+    }
+
+    dev->front_buf ^= 1;
+    dev->pflip_pending = true;
+
+    // main loop
+    while (1)
+    {
+        fds[0].revents = 0;
+
+        ret = poll(fds, 1, -1);
+        if (ret < 0)
+        {
+            if (errno == EINTR)
+                continue;
+            printf("poll failed: %s\n", strerror(errno));
+            break;
+        }
+
+        if (fds[0].revents & POLLIN)
+        {
+            ret = drmHandleEvent(fd, &ev);
+            if (ret != 0)
+            {
+                printf("drmHandleEvent failed: %s\n", strerror(errno));
+                break;
+            }
+
+            // Update FPS datas
+            xDRM_Update_FPS_Stats(&fps_stats);
+        }
+    }
+}
+
+int xDRM_Push(struct modeset_dev *dev, uint32_t *data, size_t size)
+{
+    if (!dev || !data || size != dev->src_width * dev->src_height * sizeof(uint32_t)) {
+        return -EINVAL;
+    }
+
+    pthread_mutex_lock(&dev->buffer_mutex);
+    
+    memcpy(dev->data_buffer, data, size);
+    dev->buffer_updated = true;
+    
+    pthread_mutex_unlock(&dev->buffer_mutex);
+    
+    return 0;
 }
