@@ -1,7 +1,7 @@
+#pragma once
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
 #endif
-#pragma once
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -73,17 +73,6 @@ struct modeset_dev
     pthread_mutex_t buffer_mutex;
     bool buffer_updated;
 };
-
-extern struct modeset_dev *modeset_list;
-
-int modeset_atomic_init(int fd);
-
-int modeset_setup_dev(int fd, struct modeset_dev *dev, uint32_t conn_id, uint32_t crtc_id, uint32_t plane_id, 
-    uint32_t source_width, uint32_t source_height, int x_offset, int y_offset);
-
-int modeset_atomic_modeset(int fd, struct modeset_dev *dev);
-
-void modeset_cleanup(int fd, struct modeset_dev *dev);
 
 int xDRM_Init(struct modeset_dev **dev, uint32_t conn_id, uint32_t crtc_id, uint32_t plane_id, 
     uint32_t source_width, uint32_t source_height, int x_offset, int y_offset);
