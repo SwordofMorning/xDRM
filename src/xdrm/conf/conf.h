@@ -4,6 +4,7 @@
 #include "device.h"
 
 #include "../fps/fps.h"
+#include "../pattern/pattern.h"
 
 #ifdef __cplusplus
 extern "C" {

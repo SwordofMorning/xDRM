@@ -2,49 +2,47 @@
 #include <iostream>
 #include <thread>
 
-struct modeset_dev *dev;
+struct modeset_dev *panel, *evf;
 uint32_t image_data[640 * 512];
 
-static void generate_checkerboard(uint32_t* argb_data, int width, int height, int frame_count)
+void panel_func()
 {
-    int square_size = 64;
-    int offset = frame_count * 4;
-
-    for(int y = 0; y < height; y++)
-    {
-        for(int x = 0; x < width; x++)
-        {
-            int px = (x + offset) / square_size;
-            int py = (y + offset) / square_size;
-            
-            uint32_t color = ((px + py) & 1) ? 0xFFFFFFFF : 0xFF000000;
-            argb_data[y * width + x] = color;
-        }
-    }
+    int fd = xDRM_Init(&panel, CONN_ID_DSI1, CRTC_ID_DSI1, PLANE_ID_DSI1, 640, 512, 200, 200);
+    xDRM_Pattern(image_data, 640, 512, 0);
+    xDRM_Push(panel, image_data, sizeof(image_data));
+    xDRM_Draw(fd, panel);
+    xDRM_Exit(fd, panel);
 }
 
-void pattern_func()
+void evf_func()
 {
-    int fd = xDRM_Init(&dev, CONN_ID_DSI1, CRTC_ID_DSI1, PLANE_ID_DSI1, 640, 512, 200, 200);
-    generate_checkerboard(image_data, 640, 512, 0);
-    xDRM_Push(dev, image_data, sizeof(image_data));
-    xDRM_Draw(fd, dev);
-    xDRM_Exit(fd, dev);
+    int fd = xDRM_Init(&evf, CONN_ID_DSI2, CRTC_ID_DSI2, PLANE_ID_DSI2, 640, 512, 200, 200);
+    xDRM_Pattern(image_data, 640, 512, 0);
+    xDRM_Push(evf, image_data, sizeof(image_data));
+    xDRM_Draw(fd, evf);
+    xDRM_Exit(fd, evf);
 }
 
 int main(int argc, char *argv[])
 {
-    std::thread p = std::thread(pattern_func);
+    std::thread th_panel = std::thread(panel_func);
+    std::thread th_evf = std::thread(evf_func);
 
     sleep(1);
 
     int count = 0;
     while (1)
     {
-        generate_checkerboard(image_data, 640, 512, count++);
-        xDRM_Push(dev, image_data, sizeof(image_data));
+        xDRM_Pattern(image_data, 640, 512, count++);
+        xDRM_Push(panel, image_data, sizeof(image_data));
+        xDRM_Push(evf, image_data, sizeof(image_data));
         usleep(16666);
     }
+
+    if (th_panel.joinable())
+        th_panel.join();
+    if (th_evf.joinable())
+        th_evf.join();
 
     return 0;
 }

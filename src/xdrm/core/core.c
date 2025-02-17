@@ -577,7 +577,7 @@ void page_flip_handler(int fd, unsigned int frame, unsigned int sec, unsigned in
         struct modeset_buf *buf = &dev->bufs[dev->front_buf ^ 1];
 
         // push data
-        pattern(NULL, (uint32_t*)buf->map, dev->src_width, dev->src_height);
+        xDRM_Pattern((uint32_t*)buf->map, dev->src_width, dev->src_height, frame_count_test_pattern++);
 
         // commit
         int ret = modeset_atomic_page_flip(fd, dev, dev->src_width, dev->src_height, dev->x_offset, dev->y_offset);
@@ -585,8 +585,6 @@ void page_flip_handler(int fd, unsigned int frame, unsigned int sec, unsigned in
         {
             dev->front_buf ^= 1;
             dev->pflip_pending = true;
-
-            frame_count_test_pattern++;
 
             // @attention, control 60fps.
             usleep(16666);
