@@ -12,6 +12,7 @@ void xDRM_Init_FPS_Stats(struct fps_stats *stats)
 
 void xDRM_Update_FPS_Stats(struct fps_stats *stats)
 {
+    // clang-format off
     stats->frame_count++;
     stats->total_frames++;
 
@@ -40,4 +41,5 @@ void xDRM_Update_FPS_Stats(struct fps_stats *stats)
         stats->frame_count = 0;
         stats->last_time = stats->current_time;
     }
+    // clang-format on
 }

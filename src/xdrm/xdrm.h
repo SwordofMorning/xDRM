@@ -28,59 +28,50 @@
 extern "C" {
 #endif
 
-struct drm_object
-{
-    drmModeObjectProperties *props;
-    drmModePropertyRes **props_info;
-    uint32_t id;
-};
+/**
+ * @brief xDRM init, Open /dev/dri/card0 then init struct modeset_dev with params
+ * 
+ * @param dev modeset_dev device pointer
+ * @param conn_id connector id
+ * @param crtc_id CRTC id
+ * @param plane_id plane id
+ * @param source_width display width (by pixel) on screen
+ * @param source_height display height (by pixel) on screen
+ * @param x_offset offset on width
+ * @param y_offset offset on height
+ * 
+ * @return fd or fail
+ * @retval -1, Init fail
+ * @retval fd, file descriptor of /dev/dri/card0.
+ */
+int xDRM_Init(struct modeset_dev **dev, uint32_t conn_id, uint32_t crtc_id, uint32_t plane_id, uint32_t source_width, uint32_t source_height, int x_offset, int y_offset);
 
-struct modeset_buf
-{
-    uint32_t width;
-    uint32_t height;
-    uint32_t stride;
-    uint32_t size;
-    uint32_t handle;
-    uint32_t fb;
-    uint8_t *map;
-};
-
-struct modeset_dev
-{
-    struct modeset_dev *next;
-
-    unsigned int front_buf;
-    struct modeset_buf bufs[2];
-    struct drm_object connector;
-    struct drm_object crtc;
-    struct drm_object plane;
-
-    uint32_t src_width;
-    uint32_t src_height;
-    int x_offset;
-    int y_offset;
-
-    drmModeModeInfo mode;
-    uint32_t mode_blob_id;
-
-    bool pflip_pending;
-    bool cleanup;
-
-    void* user_data;
-
-    uint32_t *data_buffer;
-    pthread_mutex_t buffer_mutex;
-    bool buffer_updated;
-};
-
-int xDRM_Init(struct modeset_dev **dev, uint32_t conn_id, uint32_t crtc_id, uint32_t plane_id, 
-    uint32_t source_width, uint32_t source_height, int x_offset, int y_offset);
-
+/**
+ * @brief xDRM cleanup, release modeset_dev and close fd
+ * 
+ * @param fd file descriptor which is created by xDRM_Init
+ * @param dev modeset_dev pointer
+ */
 void xDRM_Exit(int fd, struct modeset_dev *dev);
 
+/**
+ * @brief xDRM draw loop, draw dev->data_buffer to panel
+ * 
+ * @param fd file descriptor which is created by xDRM_Init
+ * @param dev modeset_dev pointer
+ */
 void xDRM_Draw(int fd, struct modeset_dev *dev);
 
+/**
+ * @brief Copy data from param to dev->data_buffer
+ * 
+ * @param dev modeset_dev pointer
+ * @param data ARGB array of image
+ * @param size array size
+ * @return success or not
+ * @retval 0, success
+ * @retval -EINVAL, fail
+ */
 int xDRM_Push(struct modeset_dev *dev, uint32_t *data, size_t size);
 
 #ifdef __cplusplus

@@ -1,6 +1,7 @@
 #include "pattern.h"
 
-void xDRM_Pattern_Color(uint32_t* argb_data, int width, int height, int frame_count) 
+// clang-format off
+void xDRM_Pattern_Color(uint32_t *argb_data, int width, int height, int frame_count) 
 {
     int offset = frame_count * 4;
 
@@ -17,7 +18,7 @@ void xDRM_Pattern_Color(uint32_t* argb_data, int width, int height, int frame_co
     }
 }
 
-void xDRM_Pattern_Bar(uint32_t* argb_data, int width, int height, int frame_count)
+void xDRM_Pattern_Bar(uint32_t *argb_data, int width, int height, int frame_count)
 {
     int bar_width = width / 8;
     int offset = frame_count * 8;
@@ -46,7 +47,7 @@ void xDRM_Pattern_Bar(uint32_t* argb_data, int width, int height, int frame_coun
     }
 }
 
-void xDRM_Pattern_Checkerboard(uint32_t* argb_data, int width, int height, int frame_count)
+void xDRM_Pattern_Checkerboard(uint32_t *argb_data, int width, int height, int frame_count)
 {
     int square_size = 64;
     int offset = frame_count * 4;
@@ -64,7 +65,7 @@ void xDRM_Pattern_Checkerboard(uint32_t* argb_data, int width, int height, int f
     }
 }
 
-void xDRM_Pattern(uint32_t* argb_data, int width, int height, int framecount)
+void xDRM_Pattern(uint32_t *argb_data, int width, int height, int framecount)
 {
     // change pattern per 60 frames
     switch((framecount / 60) % 3)
@@ -80,3 +81,4 @@ void xDRM_Pattern(uint32_t* argb_data, int width, int height, int framecount)
             break;
     }
 }
+// clang-format on

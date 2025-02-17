@@ -10,13 +10,13 @@ extern "C" {
 
 struct fps_stats
 {
-    struct timeval last_time;       // last frame time
-    struct timeval current_time;    // current
-    int frame_count;                // frame counter
-    float fps;                      // current fps
-    float avg_fps;                  // average fps, start from begin
-    long total_frames;              // total frames
-    long total_time;                // total times, millisecond
+    struct timeval last_time;
+    struct timeval current_time;
+    int frame_count;
+    float fps;
+    float avg_fps;
+    long total_frames;
+    long total_time;
 };
 
 void xDRM_Init_FPS_Stats(struct fps_stats *stats);

@@ -53,7 +53,7 @@ AllowShortFunctionsOnASingleLine: None
 BinPackParameters: false
 KeepEmptyLinesAtTheStartOfBlocks: false
 MaxEmptyLinesToKeep: 1
-PointerAlignment: Left
+PointerAlignment: Right
 SpaceAfterCStyleCast: false
 SpaceBeforeAssignmentOperators: true
 SpaceBeforeParens: ControlStatements

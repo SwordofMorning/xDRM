@@ -23,7 +23,7 @@ void evf_func()
     xDRM_Exit(fd, evf);
 }
 
-int main(int argc, char *argv[])
+int main()
 {
     std::thread th_panel = std::thread(panel_func);
     std::thread th_evf = std::thread(evf_func);

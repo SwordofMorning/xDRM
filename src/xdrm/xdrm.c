@@ -77,7 +77,7 @@ static int modeset_create_fb(int fd, struct modeset_buf *buf)
     creq.height = buf->height;
     creq.bpp = 32;
     creq.flags = 0;
-    
+
     ret = drmIoctl(fd, DRM_IOCTL_MODE_CREATE_DUMB, &creq);
     if (ret < 0)
     {
@@ -93,10 +93,12 @@ static int modeset_create_fb(int fd, struct modeset_buf *buf)
     uint32_t handles[4] = {buf->handle};
     uint32_t pitches[4] = {buf->stride};
     uint32_t offsets[4] = {0};
-    
+
+    // clang-format off
     ret = drmModeAddFB2(fd, buf->width, buf->height,
                         DRM_FORMAT_ARGB8888, handles, pitches, offsets,
                         &buf->fb, DRM_MODE_FB_MODIFIERS);
+    // clang-format on    
     if (ret)
     {
         fprintf(stderr, "cannot create framebuffer (%d): %m\n", errno);
@@ -475,9 +477,7 @@ static int modeset_atomic_init(int fd)
 void page_flip_handler(int fd, unsigned int frame, unsigned int sec, unsigned int usec, unsigned int crtc_id, void *data)
 {
     struct modeset_dev *dev = (struct modeset_dev *)data;
-    struct shared_memory *shm = (struct shared_memory *)dev->user_data;
-    struct sembuf sem_op;
-    
+
     dev->pflip_pending = false;
 
 #if __ENABLE_PATTERN__
