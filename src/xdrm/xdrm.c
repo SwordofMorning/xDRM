@@ -635,6 +635,11 @@ int xDRM_Init(struct modeset_dev **dev, uint32_t conn_id, uint32_t crtc_id, uint
         return -1;
     }
 
+    // Step 6 : Initialize data buffer
+    memset((*dev)->data_buffer, 0xFF000000, source_width * source_height * sizeof(uint32_t));
+
+    (*dev)->buffer_updated = true;
+
     return fd;
 }
 
