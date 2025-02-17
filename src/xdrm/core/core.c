@@ -2,9 +2,9 @@
 
 struct modeset_dev *modeset_list = NULL;
 
-/* ======================================================================================================================== */
+/* ========================================================================================================================= */
 /* ================================================== Section 0 : Pattern ================================================== */
-/* ======================================================================================================================== */
+/* ========================================================================================================================= */
 
 static int frame_count_test_pattern = 0;
 
@@ -420,11 +420,11 @@ int modeset_atomic_page_flip(int fd, struct modeset_dev *dev,
 }
 
 /* ====================================================================================================================== */
-/* ================================================== Section 3 : APIs ================================================== */
+/* ================================================== Section 3 : Wrap ================================================== */
 /* ====================================================================================================================== */
 
 int modeset_setup_dev(int fd, struct modeset_dev *dev, uint32_t conn_id, uint32_t crtc_id, uint32_t plane_id, 
-    uint32_t source_width, uint32_t source_height)
+    uint32_t source_width, uint32_t source_height, int x_offset, int y_offset)
 {
     int ret;
     
@@ -463,6 +463,11 @@ int modeset_setup_dev(int fd, struct modeset_dev *dev, uint32_t conn_id, uint32_
     dev->bufs[1].width = source_width;
     dev->bufs[1].height = source_height;
 
+    dev->src_width = source_width;
+    dev->src_height = source_height;
+    dev->x_offset = x_offset;
+    dev->y_offset = y_offset;
+
     // Step 5 : set property blob
     ret = drmModeCreatePropertyBlob(fd, &dev->mode, sizeof(dev->mode),
                                    &dev->mode_blob_id);
@@ -497,8 +502,7 @@ err_free:
     return ret;
 }
 
-int modeset_atomic_modeset(int fd, struct modeset_dev *dev, 
-    uint32_t source_width, uint32_t source_height, int x_offset, int y_offset)
+int modeset_atomic_modeset(int fd, struct modeset_dev *dev)
 {
     int ret;
     uint32_t flags;
@@ -508,7 +512,7 @@ int modeset_atomic_modeset(int fd, struct modeset_dev *dev,
         return -ENOMEM;
     }
 
-    ret = modeset_atomic_prepare_commit(fd, dev, req, source_width, source_height, x_offset, y_offset);
+    ret = modeset_atomic_prepare_commit(fd, dev, req, dev->src_width, dev->src_height, dev->x_offset, dev->y_offset);
     if (ret < 0) {
         drmModeAtomicFree(req);
         return ret;
@@ -562,41 +566,9 @@ void page_flip_handler(int fd, unsigned int frame, unsigned int sec, unsigned in
     struct sembuf sem_op;
     
     dev->pflip_pending = false;
-
+     
     if (!dev->cleanup)
     {
-        /*
-        // 等待信号量
-        sem_op.sem_num = 0;
-        sem_op.sem_op = -1;
-        sem_op.sem_flg = 0;
-        if (semop(shm->semid, &sem_op, 1) >= 0)
-        {
-            // 获取当前缓冲区
-            struct modeset_buf *buf = &dev->bufs[dev->front_buf ^ 1];
-            
-            // 转换并复制图像数据
-            nv12_to_argb((uint8_t*)shm->addr, (uint32_t*)buf->map, 640, 512);
-
-            // 释放信号量
-            sem_op.sem_op = 1;
-            semop(shm->semid, &sem_op, 1);
-
-            // 提交新帧
-            int ret = modeset_atomic_page_flip(fd, dev);
-            if (ret >= 0) {
-                dev->front_buf ^= 1;
-                dev->pflip_pending = true;
-                
-                // 增加帧计数
-                frame_count_test_pattern++;
-                
-                // 可选：添加延时控制
-                usleep(16666); // 约60fps
-            }
-        }
-        */
-
         // get current buffer
         struct modeset_buf *buf = &dev->bufs[dev->front_buf ^ 1];
 
@@ -617,7 +589,7 @@ void page_flip_handler(int fd, unsigned int frame, unsigned int sec, unsigned in
     }
 }
 
-void modeset_draw(int fd, struct modeset_dev *dev, uint32_t source_width, uint32_t source_height, int x_offset, int y_offset)
+void modeset_draw(int fd, struct modeset_dev *dev)
 {
     struct pollfd fds[1];
     int ret;
@@ -640,7 +612,7 @@ void modeset_draw(int fd, struct modeset_dev *dev, uint32_t source_width, uint32
     
     // 执行初始页面翻转
 re_flip:
-    ret = modeset_atomic_page_flip(fd, dev, source_width, source_height, x_offset, y_offset);
+    ret = modeset_atomic_page_flip(fd, dev, dev->src_width, dev->src_height, dev->x_offset, dev->y_offset);
     if (ret) {
         fprintf(stderr, "Initial page flip failed: %s\n", strerror(errno));
         goto re_flip;
@@ -717,4 +689,61 @@ void modeset_cleanup(int fd, struct modeset_dev *dev)
     drmModeFreeObjectProperties(dev->connector.props);
     drmModeFreeObjectProperties(dev->crtc.props);
     drmModeFreeObjectProperties(dev->plane.props);
+}
+
+/* ====================================================================================================================== */
+/* ================================================== Section 4 : APIs ================================================== */
+/* ====================================================================================================================== */
+
+int Modeset_Init(struct modeset_dev **dev, uint32_t conn_id, uint32_t crtc_id, uint32_t plane_id, 
+    uint32_t source_width, uint32_t source_height, int x_offset, int y_offset)
+{
+    int fd, ret;
+    
+    fd = open("/dev/dri/card0", O_RDWR | O_CLOEXEC);
+    if (fd < 0) {
+        fprintf(stderr, "Failed to open card: %s\n", strerror(errno));
+        return -1;
+    }
+
+    ret = modeset_atomic_init(fd);
+    if (ret) {
+        close(fd);
+        return -1;
+    }
+
+    // 分配内存
+    *dev = (struct modeset_dev *)malloc(sizeof(struct modeset_dev));
+    if (!*dev) {
+        close(fd);
+        return -1;
+    }
+    memset(*dev, 0, sizeof(struct modeset_dev));
+
+    // 设置设备
+    ret = modeset_setup_dev(fd, *dev, conn_id, crtc_id, plane_id, 
+                           source_width, source_height, x_offset, y_offset);
+    if (ret) {
+        free(*dev);
+        close(fd);
+        return -1;
+    }
+
+    // 设置原子模式
+    ret = modeset_atomic_modeset(fd, *dev);
+    if (ret) {
+        modeset_cleanup(fd, *dev);
+        free(*dev);
+        close(fd);
+        return -1;
+    }
+
+    return fd;
+}
+
+void Modeset_Exit(int fd, struct modeset_dev *dev)
+{
+    modeset_cleanup(fd, dev);
+    free(dev);
+    close(fd);
 }

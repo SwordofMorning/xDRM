@@ -53,6 +53,11 @@ struct modeset_dev
     struct drm_object crtc;
     struct drm_object plane;
 
+    uint32_t src_width;
+    uint32_t src_height;
+    int x_offset;
+    int y_offset;
+
     drmModeModeInfo mode;
     uint32_t mode_blob_id;
 
@@ -67,14 +72,18 @@ extern struct modeset_dev *modeset_list;
 int modeset_atomic_init(int fd);
 
 int modeset_setup_dev(int fd, struct modeset_dev *dev, uint32_t conn_id, uint32_t crtc_id, uint32_t plane_id, 
-    uint32_t source_width, uint32_t source_height);
-
-int modeset_atomic_modeset(int fd, struct modeset_dev *dev, 
     uint32_t source_width, uint32_t source_height, int x_offset, int y_offset);
+
+int modeset_atomic_modeset(int fd, struct modeset_dev *dev);
 
 void modeset_cleanup(int fd, struct modeset_dev *dev);
 
-void modeset_draw(int fd, struct modeset_dev *dev, uint32_t source_width, uint32_t source_height, int x_offset, int y_offset);
+void modeset_draw(int fd, struct modeset_dev *dev);
+
+int Modeset_Init(struct modeset_dev **dev, uint32_t conn_id, uint32_t crtc_id, uint32_t plane_id, 
+    uint32_t source_width, uint32_t source_height, int x_offset, int y_offset);
+
+void Modeset_Exit(int fd, struct modeset_dev *dev);
 
 #ifdef __cplusplus
 }

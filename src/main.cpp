@@ -3,6 +3,7 @@
 
 int main(int argc, char *argv[])
 {
+/*
     int fd, ret;
     struct modeset_dev *dev;
 
@@ -31,7 +32,7 @@ int main(int argc, char *argv[])
     std::cout << "Set device" << std::endl;
 
     // 设置设备
-    ret = modeset_setup_dev(fd, dev, CONN_ID, CRTC_ID, PLANE_ID, 640, 512);
+    ret = modeset_setup_dev(fd, dev, CONN_ID_DSI1, CRTC_ID_DSI1, PLANE_ID_DSI1, 640, 512, 0, 0);
     if (ret) {
         free(dev);
         close(fd);
@@ -41,7 +42,7 @@ int main(int argc, char *argv[])
     std::cout << "Init" << std::endl;
 
     // 执行初始模式设置
-    ret = modeset_atomic_modeset(fd, dev, 640, 512, 0, 0);
+    ret = modeset_atomic_modeset(fd, dev);
     if (ret) {
         modeset_cleanup(fd, dev);
         free(dev);
@@ -51,15 +52,19 @@ int main(int argc, char *argv[])
 
     std::cout << "Main loop" << std::endl;
 
-    // 运行主绘制循环
-    modeset_draw(fd, dev, 640, 512, 0, 0);
+*/
 
-    std::cout << "Out loop" << std::endl;
+    struct modeset_dev *dev;
+    int fd = Modeset_Init(&dev, CONN_ID_DSI1, CRTC_ID_DSI1, PLANE_ID_DSI1, 640, 512, 0, 0);
+    modeset_draw(fd, dev);
+    Modeset_Exit(fd, dev);
 
-    // 清理
-    modeset_cleanup(fd, dev);
-    free(dev);
-    close(fd);
+    // std::cout << "Out loop" << std::endl;
+
+    // // 清理
+    // modeset_cleanup(fd, dev);
+    // free(dev);
+    // close(fd);
 
     return 0;
 }
