@@ -399,12 +399,11 @@ static int modeset_setup_dev(int fd, struct modeset_dev *dev, uint32_t conn_id, 
 
     // Step 8 : User buffer and mutex
     dev->data_buffer = (uint32_t*)malloc(source_width * source_height * sizeof(uint32_t));
-    if (!dev->data_buffer) {
+    if (!dev->data_buffer)
+    {
         return -ENOMEM;
     }
-
     pthread_mutex_init(&dev->buffer_mutex, NULL);
-    dev->buffer_updated = false;
 
     drmModeFreeConnector(conn);
     return 0;
@@ -506,12 +505,8 @@ void page_flip_handler(int fd, unsigned int frame, unsigned int sec, unsigned in
         struct modeset_buf *buf = &dev->bufs[dev->front_buf ^ 1];
 
         pthread_mutex_lock(&dev->buffer_mutex);
-        if (dev->buffer_updated)
-        {
-            memcpy(buf->map, dev->data_buffer, 
+        memcpy(buf->map, dev->data_buffer, 
                 dev->src_width * dev->src_height * sizeof(uint32_t));
-            dev->buffer_updated = false;
-        }
         pthread_mutex_unlock(&dev->buffer_mutex);
 
         // commit
@@ -638,8 +633,6 @@ int xDRM_Init(struct modeset_dev **dev, uint32_t conn_id, uint32_t crtc_id, uint
     // Step 6 : Initialize data buffer
     memset((*dev)->data_buffer, 0xFF000000, source_width * source_height * sizeof(uint32_t));
 
-    (*dev)->buffer_updated = true;
-
     return fd;
 }
 
@@ -721,7 +714,6 @@ int xDRM_Push(struct modeset_dev *dev, uint32_t *data, size_t size)
     pthread_mutex_lock(&dev->buffer_mutex);
     
     memcpy(dev->data_buffer, data, size);
-    dev->buffer_updated = true;
     
     pthread_mutex_unlock(&dev->buffer_mutex);
     

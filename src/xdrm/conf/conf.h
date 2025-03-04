@@ -51,7 +51,6 @@ struct modeset_dev
 
     uint32_t *data_buffer;
     pthread_mutex_t buffer_mutex;
-    bool buffer_updated;
 };
 
 #ifdef __cplusplus

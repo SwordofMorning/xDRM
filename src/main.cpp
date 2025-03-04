@@ -33,7 +33,7 @@ int main()
         xDRM_Pattern(image_data, 640, 512, count++);
         xDRM_Push(panel, image_data, sizeof(image_data));
         xDRM_Push(evf, image_data, sizeof(image_data));
-        usleep(16666);
+        usleep(300 * 1000);
     }
 
     if (th_panel.joinable())
