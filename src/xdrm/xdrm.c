@@ -4,7 +4,7 @@
 /* ================================================== Section 1 : Basic ================================================== */
 /* ======================================================================================================================= */
 
-static uint32_t get_property_id(int fd, drmModeObjectProperties *props, const char *name)
+static uint32_t xDRM_Get_Property_ID(int fd, drmModeObjectProperties *props, const char *name)
 {
     drmModePropertyPtr property;
     uint32_t i, prop_id = 0;
@@ -26,7 +26,7 @@ static uint32_t get_property_id(int fd, drmModeObjectProperties *props, const ch
     return prop_id;
 }
 
-static int set_drm_object_property(drmModeAtomicReq *req, struct drm_object *obj, const char *name, uint64_t value)
+static int xDRM_Set_DRM_Object_Property(drmModeAtomicReq *req, struct drm_object *obj, const char *name, uint64_t value)
 {
     uint32_t prop_id = 0;
     int i;
@@ -49,7 +49,7 @@ static int set_drm_object_property(drmModeAtomicReq *req, struct drm_object *obj
     return drmModeAtomicAddProperty(req, obj->id, prop_id, value);
 }
 
-static void modeset_get_object_properties(int fd, struct drm_object *obj, uint32_t type)
+static void xDRM_Modeset_Get_Object_Properties(int fd, struct drm_object *obj, uint32_t type)
 {
     obj->props = drmModeObjectGetProperties(fd, obj->id, type);
     if (!obj->props)
@@ -65,7 +65,7 @@ static void modeset_get_object_properties(int fd, struct drm_object *obj, uint32
     }
 }
 
-static int modeset_create_fb(int fd, struct modeset_buf *buf)
+static int xDRM_Modeset_Create_FB(int fd, struct modeset_buf *buf)
 {
     struct drm_mode_create_dumb creq;
     struct drm_mode_map_dumb mreq;
@@ -94,11 +94,8 @@ static int modeset_create_fb(int fd, struct modeset_buf *buf)
     uint32_t pitches[4] = {buf->stride};
     uint32_t offsets[4] = {0};
 
-    // clang-format off
-    ret = drmModeAddFB2(fd, buf->width, buf->height,
-                        DRM_FORMAT_ARGB8888, handles, pitches, offsets,
-                        &buf->fb, DRM_MODE_FB_MODIFIERS);
-    // clang-format on    
+    ret = drmModeAddFB2(fd, buf->width, buf->height, DRM_FORMAT_ARGB8888, handles, pitches, offsets, &buf->fb, DRM_MODE_FB_MODIFIERS);
+
     if (ret)
     {
         fprintf(stderr, "cannot create framebuffer (%d): %m\n", errno);
@@ -110,16 +107,17 @@ static int modeset_create_fb(int fd, struct modeset_buf *buf)
     memset(&mreq, 0, sizeof(mreq));
     mreq.handle = buf->handle;
     ret = drmIoctl(fd, DRM_IOCTL_MODE_MAP_DUMB, &mreq);
-    if (ret) {
+
+    if (ret)
+    {
         fprintf(stderr, "cannot map dumb buffer (%d): %m\n", errno);
         ret = -errno;
         goto err_fb;
     }
 
-    buf->map = (uint8_t *)mmap(0, buf->size,
-                    PROT_READ | PROT_WRITE, MAP_SHARED,
-                    fd, mreq.offset);
-    if (buf->map == MAP_FAILED) {
+    buf->map = (uint8_t *)mmap(0, buf->size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, mreq.offset);
+    if (buf->map == MAP_FAILED)
+    {
         fprintf(stderr, "cannot mmap dumb buffer (%d): %m\n", errno);
         ret = -errno;
         goto err_fb;
@@ -137,7 +135,7 @@ err_destroy:
     return ret;
 }
 
-static void modeset_destroy_fb(int fd, struct modeset_buf *buf)
+static void xDRM_Modeset_Destroy_FB(int fd, struct modeset_buf *buf)
 {
     struct drm_mode_destroy_dumb dreq;
 
@@ -153,7 +151,7 @@ static void modeset_destroy_fb(int fd, struct modeset_buf *buf)
     drmIoctl(fd, DRM_IOCTL_MODE_DESTROY_DUMB, &dreq);
 }
 
-static int check_plane_capabilities(int fd, struct modeset_dev *dev)
+static int xDRM_Check_Plane_Capabilities(int fd, struct modeset_dev *dev)
 {
     drmModePlane *plane = drmModeGetPlane(fd, dev->plane.id);
     if (!plane)
@@ -163,8 +161,7 @@ static int check_plane_capabilities(int fd, struct modeset_dev *dev)
     }
 
 #if __ENABLE_DEBUG_LOG__
-    printf("Plane info: id=%u, possible_crtcs=0x%x, formats_count=%u\n",
-           plane->plane_id, plane->possible_crtcs, plane->count_formats);
+    printf("Plane info: id=%u, possible_crtcs=0x%x, formats_count=%u\n", plane->plane_id, plane->possible_crtcs, plane->count_formats);
 #endif
 
     // get resource
@@ -215,8 +212,7 @@ static int check_plane_capabilities(int fd, struct modeset_dev *dev)
 
     if (!(plane->possible_crtcs & crtc_bit))
     {
-        fprintf(stderr, "Plane %u cannot be used with CRTC %u\n",
-                plane->plane_id, dev->crtc.id);
+        fprintf(stderr, "Plane %u cannot be used with CRTC %u\n", plane->plane_id, dev->crtc.id);
         drmModeFreePlane(plane);
         return -EINVAL;
     }
@@ -234,8 +230,7 @@ static int check_plane_capabilities(int fd, struct modeset_dev *dev)
 
     if (!format_supported)
     {
-        fprintf(stderr, "Plane %u does not support ARGB8888 format\n",
-                plane->plane_id);
+        fprintf(stderr, "Plane %u does not support ARGB8888 format\n", plane->plane_id);
         drmModeFreePlane(plane);
         return -EINVAL;
     }
@@ -248,43 +243,51 @@ static int check_plane_capabilities(int fd, struct modeset_dev *dev)
 /* ================================================== Section 2 : Atomic ================================================== */
 /* ======================================================================================================================== */
 
-static int modeset_atomic_prepare_commit(int fd, struct modeset_dev *dev, drmModeAtomicReq *req, 
+// clang-format off
+static int xDRM_Modeset_Atomic_Prepare_Commit(int fd, struct modeset_dev *dev, drmModeAtomicReq *req,
     uint32_t source_width, uint32_t source_height, int x_offset, int y_offset)
+// clang-format on
 {
     struct modeset_buf *buf = &dev->bufs[dev->front_buf ^ 1];
     int ret;
 
     // only set necessary plane properties
-    ret = set_drm_object_property(req, &dev->plane, "FB_ID", buf->fb);
-    if (ret < 0) return ret;
+    ret = xDRM_Set_DRM_Object_Property(req, &dev->plane, "FB_ID", buf->fb);
+    if (ret < 0)
+        return ret;
 
-    ret = set_drm_object_property(req, &dev->plane, "CRTC_ID", dev->crtc.id);
-    if (ret < 0) return ret;
+    ret = xDRM_Set_DRM_Object_Property(req, &dev->plane, "CRTC_ID", dev->crtc.id);
+    if (ret < 0)
+        return ret;
 
     // set source property
-    ret = set_drm_object_property(req, &dev->plane, "SRC_X", 0);
-    ret |= set_drm_object_property(req, &dev->plane, "SRC_Y", 0);
-    ret |= set_drm_object_property(req, &dev->plane, "SRC_W", source_width << 16);
-    ret |= set_drm_object_property(req, &dev->plane, "SRC_H", source_height << 16);
-    if (ret < 0) return ret;
+    ret = xDRM_Set_DRM_Object_Property(req, &dev->plane, "SRC_X", 0);
+    ret |= xDRM_Set_DRM_Object_Property(req, &dev->plane, "SRC_Y", 0);
+    ret |= xDRM_Set_DRM_Object_Property(req, &dev->plane, "SRC_W", source_width << 16);
+    ret |= xDRM_Set_DRM_Object_Property(req, &dev->plane, "SRC_H", source_height << 16);
+    if (ret < 0)
+        return ret;
 
     // set display property
-    ret = set_drm_object_property(req, &dev->plane, "CRTC_X", x_offset);
-    ret |= set_drm_object_property(req, &dev->plane, "CRTC_Y", y_offset);
-    ret |= set_drm_object_property(req, &dev->plane, "CRTC_W", source_width);
-    ret |= set_drm_object_property(req, &dev->plane, "CRTC_H", source_height);
+    ret = xDRM_Set_DRM_Object_Property(req, &dev->plane, "CRTC_X", x_offset);
+    ret |= xDRM_Set_DRM_Object_Property(req, &dev->plane, "CRTC_Y", y_offset);
+    ret |= xDRM_Set_DRM_Object_Property(req, &dev->plane, "CRTC_W", source_width);
+    ret |= xDRM_Set_DRM_Object_Property(req, &dev->plane, "CRTC_H", source_height);
 
     // zpos
-    ret = set_drm_object_property(req, &dev->plane, "zpos", 0);
-    if (ret < 0) {
+    ret = xDRM_Set_DRM_Object_Property(req, &dev->plane, "zpos", 0);
+    if (ret < 0)
+    {
         fprintf(stderr, "Note: zpos property not supported\n");
     }
 
     return 0;
 }
 
-static int modeset_atomic_commit(int fd, struct modeset_dev *dev, uint32_t flags,
+// clang-format off
+static int xDRM_Modeset_Atomic_Commit(int fd, struct modeset_dev *dev, uint32_t flags, 
     uint32_t source_width, uint32_t source_height, int x_offset, int y_offset)
+// clang-format on
 {
     drmModeAtomicReq *req;
     int ret;
@@ -296,7 +299,7 @@ static int modeset_atomic_commit(int fd, struct modeset_dev *dev, uint32_t flags
         return -ENOMEM;
     }
 
-    ret = modeset_atomic_prepare_commit(fd, dev, req, source_width, source_height, x_offset, y_offset);
+    ret = xDRM_Modeset_Atomic_Prepare_Commit(fd, dev, req, source_width, source_height, x_offset, y_offset);
     if (ret < 0)
     {
         fprintf(stderr, "Failed to prepare atomic commit for plane %u\n", dev->plane.id);
@@ -310,37 +313,38 @@ static int modeset_atomic_commit(int fd, struct modeset_dev *dev, uint32_t flags
     ret = drmModeAtomicCommit(fd, req, flags, dev);
     if (ret < 0)
     {
-        fprintf(stderr, "Failed to commit atomic request for plane %u: %s\n",
-                dev->plane.id, strerror(errno));
+        fprintf(stderr, "Failed to commit atomic request for plane %u: %s\n", dev->plane.id, strerror(errno));
     }
 
     drmModeAtomicFree(req);
     return ret;
 }
 
-int modeset_atomic_page_flip(int fd, struct modeset_dev *dev,
-    uint32_t source_width, uint32_t source_height, int x_offset, int y_offset)
+int xDRM_Modeset_Atomic_Page_Flip(int fd, struct modeset_dev *dev, uint32_t source_width, uint32_t source_height, int x_offset, int y_offset)
 {
     uint32_t flags = DRM_MODE_PAGE_FLIP_EVENT;
-    return modeset_atomic_commit(fd, dev, flags, source_width, source_height, x_offset, y_offset);
+    return xDRM_Modeset_Atomic_Commit(fd, dev, flags, source_width, source_height, x_offset, y_offset);
 }
 
 /* ====================================================================================================================== */
 /* ================================================== Section 3 : Wrap ================================================== */
 /* ====================================================================================================================== */
 
-static int modeset_setup_dev(int fd, struct modeset_dev *dev, uint32_t conn_id, uint32_t crtc_id, uint32_t plane_id, 
-    uint32_t source_width, uint32_t source_height, int x_offset, int y_offset)
+// clang-format off
+static int xDRM_Modeset_Setup_Dev(int fd, struct modeset_dev *dev,
+    uint32_t conn_id, uint32_t crtc_id, uint32_t plane_id, uint32_t source_width, uint32_t source_height, int x_offset, int y_offset)
+// clang-format on
 {
     int ret;
-    
+
     dev->connector.id = conn_id;
     dev->crtc.id = crtc_id;
     dev->plane.id = plane_id;
 
     // Step 1 : checkout plane
-    ret = check_plane_capabilities(fd, dev);
-    if (ret < 0) {
+    ret = xDRM_Check_Plane_Capabilities(fd, dev);
+    if (ret < 0)
+    {
         fprintf(stderr, "Plane capability check failed\n");
         return ret;
     }
@@ -360,7 +364,7 @@ static int modeset_setup_dev(int fd, struct modeset_dev *dev, uint32_t conn_id, 
         ret = -EFAULT;
         goto err_free;
     }
-    
+
     memcpy(&dev->mode, &conn->modes[0], sizeof(dev->mode));
 
     // Step 4 : set buffer display size, @note source!
@@ -375,30 +379,29 @@ static int modeset_setup_dev(int fd, struct modeset_dev *dev, uint32_t conn_id, 
     dev->y_offset = y_offset;
 
     // Step 5 : set property blob
-    ret = drmModeCreatePropertyBlob(fd, &dev->mode, sizeof(dev->mode),
-                                   &dev->mode_blob_id);
-    if (ret) {
+    ret = drmModeCreatePropertyBlob(fd, &dev->mode, sizeof(dev->mode), &dev->mode_blob_id);
+    if (ret)
+    {
         fprintf(stderr, "cannot create mode blob: %m\n");
         goto err_free;
     }
 
     // Step 6 : get properties
-    modeset_get_object_properties(fd, &dev->connector, DRM_MODE_OBJECT_CONNECTOR);
-    modeset_get_object_properties(fd, &dev->crtc, DRM_MODE_OBJECT_CRTC);
-    modeset_get_object_properties(fd, &dev->plane, DRM_MODE_OBJECT_PLANE);
+    xDRM_Modeset_Get_Object_Properties(fd, &dev->connector, DRM_MODE_OBJECT_CONNECTOR);
+    xDRM_Modeset_Get_Object_Properties(fd, &dev->crtc, DRM_MODE_OBJECT_CRTC);
+    xDRM_Modeset_Get_Object_Properties(fd, &dev->plane, DRM_MODE_OBJECT_PLANE);
 
     // Step 7 : create frame buffer
-    ret = modeset_create_fb(fd, &dev->bufs[0]);
+    ret = xDRM_Modeset_Create_FB(fd, &dev->bufs[0]);
     if (ret)
         goto err_blob;
 
-    ret = modeset_create_fb(fd, &dev->bufs[1]);
+    ret = xDRM_Modeset_Create_FB(fd, &dev->bufs[1]);
     if (ret)
         goto err_fb0;
 
-
     // Step 8 : User buffer and mutex
-    dev->data_buffer = (uint32_t*)malloc(source_width * source_height * sizeof(uint32_t));
+    dev->data_buffer = (uint32_t *)malloc(source_width * source_height * sizeof(uint32_t));
     if (!dev->data_buffer)
     {
         return -ENOMEM;
@@ -409,7 +412,7 @@ static int modeset_setup_dev(int fd, struct modeset_dev *dev, uint32_t conn_id, 
     return 0;
 
 err_fb0:
-    modeset_destroy_fb(fd, &dev->bufs[0]);
+    xDRM_Modeset_Destroy_FB(fd, &dev->bufs[0]);
 err_blob:
     drmModeDestroyPropertyBlob(fd, dev->mode_blob_id);
 err_free:
@@ -417,18 +420,20 @@ err_free:
     return ret;
 }
 
-static int modeset_atomic_modeset(int fd, struct modeset_dev *dev)
+static int xDRM_Modeset_Atomic_Modeset(int fd, struct modeset_dev *dev)
 {
     int ret;
     uint32_t flags;
 
     drmModeAtomicReq *req = drmModeAtomicAlloc();
-    if (!req) {
+    if (!req)
+    {
         return -ENOMEM;
     }
 
-    ret = modeset_atomic_prepare_commit(fd, dev, req, dev->src_width, dev->src_height, dev->x_offset, dev->y_offset);
-    if (ret < 0) {
+    ret = xDRM_Modeset_Atomic_Prepare_Commit(fd, dev, req, dev->src_width, dev->src_height, dev->x_offset, dev->y_offset);
+    if (ret < 0)
+    {
         drmModeAtomicFree(req);
         return ret;
     }
@@ -436,7 +441,8 @@ static int modeset_atomic_modeset(int fd, struct modeset_dev *dev)
     // use the least privilege flag
     flags = DRM_MODE_ATOMIC_NONBLOCK;
     ret = drmModeAtomicCommit(fd, req, flags, dev);
-    if (ret < 0) {
+    if (ret < 0)
+    {
         printf("Atomic modeset failed: %s\n", strerror(errno));
     }
 
@@ -444,7 +450,7 @@ static int modeset_atomic_modeset(int fd, struct modeset_dev *dev)
     return ret;
 }
 
-static int modeset_atomic_init(int fd)
+static int xDRM_Modeset_Atomic_Init(int fd)
 {
     uint64_t cap;
     int ret;
@@ -473,7 +479,7 @@ static int modeset_atomic_init(int fd)
     return 0;
 }
 
-void page_flip_handler(int fd, unsigned int frame, unsigned int sec, unsigned int usec, unsigned int crtc_id, void *data)
+void xDRM_Page_Flip_Handler(int fd, unsigned int frame, unsigned int sec, unsigned int usec, unsigned int crtc_id, void *data)
 {
     struct modeset_dev *dev = (struct modeset_dev *)data;
 
@@ -486,10 +492,10 @@ void page_flip_handler(int fd, unsigned int frame, unsigned int sec, unsigned in
         struct modeset_buf *buf = &dev->bufs[dev->front_buf ^ 1];
 
         // push data
-        xDRM_Pattern((uint32_t*)buf->map, dev->src_width, dev->src_height, frame_count_test_pattern++);
+        xDRM_Pattern((uint32_t *)buf->map, dev->src_width, dev->src_height, frame_count_test_pattern++);
 
         // commit
-        int ret = modeset_atomic_page_flip(fd, dev, dev->src_width, dev->src_height, dev->x_offset, dev->y_offset);
+        int ret = xDRM_Modeset_Atomic_Page_Flip(fd, dev, dev->src_width, dev->src_height, dev->x_offset, dev->y_offset);
         if (ret >= 0)
         {
             dev->front_buf ^= 1;
@@ -505,13 +511,11 @@ void page_flip_handler(int fd, unsigned int frame, unsigned int sec, unsigned in
         struct modeset_buf *buf = &dev->bufs[dev->front_buf ^ 1];
 
         pthread_mutex_lock(&dev->buffer_mutex);
-        memcpy(buf->map, dev->data_buffer, 
-                dev->src_width * dev->src_height * sizeof(uint32_t));
+        memcpy(buf->map, dev->data_buffer, dev->src_width * dev->src_height * sizeof(uint32_t));
         pthread_mutex_unlock(&dev->buffer_mutex);
 
         // commit
-        int ret = modeset_atomic_page_flip(fd, dev, dev->src_width, 
-                                        dev->src_height, dev->x_offset, dev->y_offset);
+        int ret = xDRM_Modeset_Atomic_Page_Flip(fd, dev, dev->src_width, dev->src_height, dev->x_offset, dev->y_offset);
         if (ret >= 0)
         {
             dev->front_buf ^= 1;
@@ -522,11 +526,11 @@ void page_flip_handler(int fd, unsigned int frame, unsigned int sec, unsigned in
 #endif
 }
 
-static void modeset_cleanup(int fd, struct modeset_dev *dev)
+static void xDRM_Modeset_Cleanup(int fd, struct modeset_dev *dev)
 {
     drmEventContext ev = {
         .version = DRM_EVENT_CONTEXT_VERSION,
-        .page_flip_handler2 = page_flip_handler,
+        .page_flip_handler2 = xDRM_Page_Flip_Handler,
     };
 
     dev->cleanup = true;
@@ -541,15 +545,15 @@ static void modeset_cleanup(int fd, struct modeset_dev *dev)
     if (req)
     {
         // Only clean plane, do nothing for CRTC
-        set_drm_object_property(req, &dev->plane, "FB_ID", 0);
-        set_drm_object_property(req, &dev->plane, "CRTC_ID", 0);
+        xDRM_Set_DRM_Object_Property(req, &dev->plane, "FB_ID", 0);
+        xDRM_Set_DRM_Object_Property(req, &dev->plane, "CRTC_ID", 0);
         drmModeAtomicCommit(fd, req, DRM_MODE_ATOMIC_NONBLOCK, NULL);
         drmModeAtomicFree(req);
     }
 
     // fb
-    modeset_destroy_fb(fd, &dev->bufs[0]);
-    modeset_destroy_fb(fd, &dev->bufs[1]);
+    xDRM_Modeset_Destroy_FB(fd, &dev->bufs[0]);
+    xDRM_Modeset_Destroy_FB(fd, &dev->bufs[1]);
     drmModeDestroyPropertyBlob(fd, dev->mode_blob_id);
 
     // properties
@@ -569,7 +573,8 @@ static void modeset_cleanup(int fd, struct modeset_dev *dev)
     drmModeFreeObjectProperties(dev->plane.props);
 
     // mutex and user buffer
-    if (dev->data_buffer) {
+    if (dev->data_buffer)
+    {
         free(dev->data_buffer);
         dev->data_buffer = NULL;
     }
@@ -580,11 +585,13 @@ static void modeset_cleanup(int fd, struct modeset_dev *dev)
 /* ================================================== Section 4 : APIs ================================================== */
 /* ====================================================================================================================== */
 
+// clang-format off
 int xDRM_Init(struct modeset_dev **dev, uint32_t conn_id, uint32_t crtc_id, uint32_t plane_id, 
     uint32_t source_width, uint32_t source_height, int x_offset, int y_offset)
+// clang-format on
 {
     int fd, ret;
-    
+
     // Step 1 : Open Device
     fd = open("/dev/dri/card0", O_RDWR | O_CLOEXEC);
     if (fd < 0)
@@ -594,7 +601,7 @@ int xDRM_Init(struct modeset_dev **dev, uint32_t conn_id, uint32_t crtc_id, uint
     }
 
     // Step 2 : Init Atomic
-    ret = modeset_atomic_init(fd);
+    ret = xDRM_Modeset_Atomic_Init(fd);
     if (ret)
     {
         close(fd);
@@ -611,8 +618,7 @@ int xDRM_Init(struct modeset_dev **dev, uint32_t conn_id, uint32_t crtc_id, uint
     memset(*dev, 0, sizeof(struct modeset_dev));
 
     // Step 4 : Setup Device
-    ret = modeset_setup_dev(fd, *dev, conn_id, crtc_id, plane_id, 
-                           source_width, source_height, x_offset, y_offset);
+    ret = xDRM_Modeset_Setup_Dev(fd, *dev, conn_id, crtc_id, plane_id, source_width, source_height, x_offset, y_offset);
     if (ret)
     {
         free(*dev);
@@ -621,10 +627,10 @@ int xDRM_Init(struct modeset_dev **dev, uint32_t conn_id, uint32_t crtc_id, uint
     }
 
     // Step 5 : Stepup Atomic
-    ret = modeset_atomic_modeset(fd, *dev);
+    ret = xDRM_Modeset_Atomic_Modeset(fd, *dev);
     if (ret)
     {
-        modeset_cleanup(fd, *dev);
+        xDRM_Modeset_Cleanup(fd, *dev);
         free(*dev);
         close(fd);
         return -1;
@@ -638,7 +644,7 @@ int xDRM_Init(struct modeset_dev **dev, uint32_t conn_id, uint32_t crtc_id, uint
 
 void xDRM_Exit(int fd, struct modeset_dev *dev)
 {
-    modeset_cleanup(fd, dev);
+    xDRM_Modeset_Cleanup(fd, dev);
     free(dev);
     close(fd);
 }
@@ -648,25 +654,25 @@ void xDRM_Draw(int fd, struct modeset_dev *dev)
     struct pollfd fds[1];
     int ret;
     struct fps_stats fps_stats;
-    
+
     // Init context
     drmEventContext ev = {};
     memset(&ev, 0, sizeof(ev));
     ev.version = DRM_EVENT_CONTEXT_VERSION;
-    ev.page_flip_handler2 = page_flip_handler;
+    ev.page_flip_handler2 = xDRM_Page_Flip_Handler;
     ev.vblank_handler = NULL;
-    
+
     // Init FPS
     xDRM_Init_FPS_Stats(&fps_stats);
-    
+
     // Set DRM file descriptor
     fds[0].fd = fd;
     fds[0].events = POLLIN;
     fds[0].revents = 0;
-    
+
     // execute first atomic page flip
 re_flip:
-    ret = modeset_atomic_page_flip(fd, dev, dev->src_width, dev->src_height, dev->x_offset, dev->y_offset);
+    ret = xDRM_Modeset_Atomic_Page_Flip(fd, dev, dev->src_width, dev->src_height, dev->x_offset, dev->y_offset);
     if (ret)
     {
         fprintf(stderr, "Initial page flip failed: %s\n", strerror(errno));
@@ -707,15 +713,16 @@ re_flip:
 
 int xDRM_Push(struct modeset_dev *dev, uint32_t *data, size_t size)
 {
-    if (!dev || !data || size != dev->src_width * dev->src_height * sizeof(uint32_t)) {
+    if (!dev || !data || size != dev->src_width * dev->src_height * sizeof(uint32_t))
+    {
         return -EINVAL;
     }
 
     pthread_mutex_lock(&dev->buffer_mutex);
-    
+
     memcpy(dev->data_buffer, data, size);
-    
+
     pthread_mutex_unlock(&dev->buffer_mutex);
-    
+
     return 0;
 }
