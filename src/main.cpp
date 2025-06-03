@@ -3,18 +3,18 @@
 #include <thread>
 
 struct modeset_dev *panel, *evf;
-uint32_t image_data[640 * 512];
+uint32_t image_data[1088 * 1920];
 
 void panel_func()
 {
-    int fd = xDRM_Init(&panel, CONN_ID_DSI1, CRTC_ID_DSI1, PLANE_ID_DSI1, 640, 512, 200, 200);
+    int fd = xDRM_Init(&panel, CONN_ID_DSI1, CRTC_ID_DSI1, PLANE_ID_DSI1, 1088, 1920, 0, 0);
     xDRM_Draw(fd, panel);
     xDRM_Exit(fd, panel);
 }
 
 void evf_func()
 {
-    int fd = xDRM_Init(&evf, CONN_ID_DSI2, CRTC_ID_DSI2, PLANE_ID_DSI2, 640, 512, 200, 200);
+    int fd = xDRM_Init(&evf, CONN_ID_DSI2, CRTC_ID_DSI2, PLANE_ID_DSI2, 1088, 1920, 0, 0);
     xDRM_Draw(fd, evf);
     xDRM_Exit(fd, evf);
 }
@@ -30,10 +30,10 @@ int main()
     int count = 0;
     while (1)
     {
-        xDRM_Pattern(image_data, 640, 512, count++);
+        xDRM_Pattern(image_data, 1088, 1920, count++);
         xDRM_Push(panel, image_data, sizeof(image_data));
         xDRM_Push(evf, image_data, sizeof(image_data));
-        usleep(300 * 1000);
+        usleep(16 * 1000);
     }
 
     if (th_panel.joinable())
