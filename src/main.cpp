@@ -14,7 +14,7 @@ void panel_func()
 
 void evf_func()
 {
-    int fd = xDRM_Init(&evf, CONN_ID_DSI2, CRTC_ID_DSI2, PLANE_ID_DSI2, 1088, 1920, 0, 0);
+    int fd = xDRM_Init(&evf, CONN_ID_DSI2, CRTC_ID_DSI2, PLANE_ID_DSI2, 1920, 1088, 0, 0);
     xDRM_Draw(fd, evf);
     xDRM_Exit(fd, evf);
 }

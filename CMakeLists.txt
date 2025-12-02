@@ -31,7 +31,7 @@ INCLUDE_DIRECTORIES(
 
 # ===== Step 4 : Set Application Name =====
 
-SET(APP_NAME "drm")
+SET(APP_NAME "xdrm")
 
 # ===== Step 5 : Add Subdirectory =====
 
