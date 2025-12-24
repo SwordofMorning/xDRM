@@ -476,6 +476,13 @@ static int xDRM_Modeset_Atomic_Init(int fd)
         return ret;
     }
 
+    ret = drmSetClientCap(fd, DRM_CLIENT_CAP_WRITEBACK_CONNECTORS, 1);
+    if (ret)
+    {
+        // Not fatal, but pull won't work
+        fprintf(stderr, "Note: Failed to set writeback cap, xDRM_Pull_CRTC may fail.\n");
+    }
+
     return 0;
 }
 
@@ -725,4 +732,167 @@ int xDRM_Push(struct modeset_dev *dev, uint32_t *data, size_t size)
     pthread_mutex_unlock(&dev->buffer_mutex);
 
     return 0;
+}
+
+static int xDRM_Find_Writeback_Connector(int fd, uint32_t crtc_id, uint32_t *wb_conn_id)
+{
+    drmModeRes *res = drmModeGetResources(fd);
+    if (!res) return -1;
+
+    int found = 0;
+
+    for (int i = 0; i < res->count_connectors; i++)
+    {
+        drmModeConnector *conn = drmModeGetConnector(fd, res->connectors[i]);
+        if (!conn) continue;
+
+        if (conn->connector_type == DRM_MODE_CONNECTOR_WRITEBACK)
+        {
+            // Check if this WB connector supports the target CRTC
+            // We need to iterate encoders attached to this connector
+            for (int j = 0; j < conn->count_encoders; j++)
+            {
+                drmModeEncoder *enc = drmModeGetEncoder(fd, conn->encoders[j]);
+                if (!enc) continue;
+
+                // Check possible_crtcs bitmask
+                // crtc_id is the ID, we need the index. But simpler:
+                // We iterate all CRTCs to find the index of our target crtc_id
+                int crtc_index = -1;
+                for (int k = 0; k < res->count_crtcs; k++) {
+                    if (res->crtcs[k] == crtc_id) {
+                        crtc_index = k;
+                        break;
+                    }
+                }
+
+                if (crtc_index >= 0 && (enc->possible_crtcs & (1 << crtc_index)))
+                {
+                    *wb_conn_id = conn->connector_id;
+                    found = 1;
+                }
+                
+                drmModeFreeEncoder(enc);
+                if (found) break;
+            }
+        }
+
+        drmModeFreeConnector(conn);
+        if (found) break;
+    }
+
+    drmModeFreeResources(res);
+    return found ? 0 : -1;
+}
+
+int xDRM_Pull_CRTC(int fd, uint32_t crtc_id, uint32_t *buffer, size_t size)
+{
+    int ret;
+    uint32_t wb_conn_id = 0;
+    struct drm_object wb_conn = {0};
+    struct modeset_buf wb_buf = {0};
+    drmModeCrtc *crtc_info = NULL;
+    drmModeAtomicReq *req = NULL;
+    uint32_t flags = 0;
+
+    if (!buffer) return -EINVAL;
+
+    // 1. Find a compatible Writeback Connector
+    if (xDRM_Find_Writeback_Connector(fd, crtc_id, &wb_conn_id) < 0)
+    {
+        fprintf(stderr, "No Writeback connector found for CRTC %u\n", crtc_id);
+        return -ENOTSUP;
+    }
+
+    // 2. Get CRTC dimensions
+    crtc_info = drmModeGetCrtc(fd, crtc_id);
+    if (!crtc_info)
+    {
+        fprintf(stderr, "Failed to get CRTC info\n");
+        return -EINVAL;
+    }
+
+    if (crtc_info->mode.hdisplay * crtc_info->mode.vdisplay * 4 != size)
+    {
+        fprintf(stderr, "Buffer size mismatch. CRTC: %ux%u, BufSize: %zu\n", 
+            crtc_info->mode.hdisplay, crtc_info->mode.vdisplay, size);
+        drmModeFreeCrtc(crtc_info);
+        return -EINVAL;
+    }
+
+    wb_buf.width = crtc_info->mode.hdisplay;
+    wb_buf.height = crtc_info->mode.vdisplay;
+    drmModeFreeCrtc(crtc_info);
+
+    // 3. Create Destination Buffer (Dumb Buffer)
+    // We reuse the existing helper
+    ret = xDRM_Modeset_Create_FB(fd, &wb_buf);
+    if (ret < 0)
+    {
+        fprintf(stderr, "Failed to create writeback buffer\n");
+        return ret;
+    }
+
+    // 4. Prepare Writeback Connector Object
+    wb_conn.id = wb_conn_id;
+    xDRM_Modeset_Get_Object_Properties(fd, &wb_conn, DRM_MODE_OBJECT_CONNECTOR);
+
+    // 5. Build Atomic Request
+    req = drmModeAtomicAlloc();
+    if (!req)
+    {
+        ret = -ENOMEM;
+        goto out;
+    }
+
+    // Attach WB Connector to CRTC
+    ret = xDRM_Set_DRM_Object_Property(req, &wb_conn, "CRTC_ID", crtc_id);
+    // Set the Output Framebuffer
+    ret |= xDRM_Set_DRM_Object_Property(req, &wb_conn, "WRITEBACK_FB_ID", wb_buf.fb);
+    
+    // Optional: Fence handling could be added here for precise synchronization, 
+    // but blocking commit usually suffices for simple snapshots.
+    
+    if (ret < 0)
+    {
+        fprintf(stderr, "Failed to set writeback properties\n");
+        goto out;
+    }
+
+    // 6. Commit (Blocking)
+    // We do NOT use DRM_MODE_ATOMIC_NONBLOCK here. We want to wait for the writeback to finish.
+    flags = DRM_MODE_ATOMIC_ALLOW_MODESET; 
+    ret = drmModeAtomicCommit(fd, req, flags, NULL);
+    if (ret < 0)
+    {
+        fprintf(stderr, "Writeback commit failed: %s\n", strerror(errno));
+        goto out;
+    }
+
+    // 7. Copy data to user buffer
+    // Since we used a blocking commit, the data should be ready in the dumb buffer map
+    memcpy(buffer, wb_buf.map, size);
+
+    // 8. Detach Writeback Connector (Cleanup HW state)
+    drmModeAtomicFree(req);
+    req = drmModeAtomicAlloc();
+    xDRM_Set_DRM_Object_Property(req, &wb_conn, "CRTC_ID", 0);
+    xDRM_Set_DRM_Object_Property(req, &wb_conn, "WRITEBACK_FB_ID", 0);
+    drmModeAtomicCommit(fd, req, 0, NULL); // Best effort cleanup
+
+out:
+    if (req) drmModeAtomicFree(req);
+    
+    // Free WB Connector props
+    if (wb_conn.props) {
+        for (uint32_t i = 0; i < wb_conn.props->count_props; i++)
+            drmModeFreeProperty(wb_conn.props_info[i]);
+        free(wb_conn.props_info);
+        drmModeFreeObjectProperties(wb_conn.props);
+    }
+
+    // Destroy FB
+    xDRM_Modeset_Destroy_FB(fd, &wb_buf);
+
+    return ret;
 }

@@ -74,6 +74,19 @@ void xDRM_Draw(int fd, struct modeset_dev *dev);
  */
 int xDRM_Push(struct modeset_dev *dev, uint32_t *data, size_t size);
 
+/**
+ * @brief Pull the composed image from a specific CRTC via Writeback Connector
+ * 
+ * @param fd file descriptor
+ * @param crtc_id target CRTC id
+ * @param buffer user buffer to store the image (must be allocated)
+ * @param size size of the buffer (must match crtc_width * crtc_height * 4)
+ * @return success or not
+ * @retval 0, success
+ * @retval -1, fail
+ */
+int xDRM_Pull_CRTC(int fd, uint32_t crtc_id, uint32_t *buffer, size_t size);
+
 #ifdef __cplusplus
 }
 #endif
