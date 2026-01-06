@@ -77,6 +77,18 @@ void xDRM_Draw(int fd, struct modeset_dev *dev);
  */
 int xDRM_Push(struct modeset_dev *dev, uint32_t *data, size_t size);
 
+/**
+ * @brief Dynamic change display layout (Thread Safe)
+ * 
+ * @param dev modeset_dev pointer
+ * @param x_offset new x offset on CRTC
+ * @param y_offset new y offset on CRTC
+ * @param actual_width new display width
+ * @param actual_height new display height
+ * @return int 0 on success
+ */
+int xDRM_Set_Layout(struct modeset_dev *dev, int x_offset, int y_offset, int actual_width, int actual_height);
+
 #ifdef __cplusplus
 }
 #endif

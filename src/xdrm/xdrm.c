@@ -245,7 +245,8 @@ static int xDRM_Check_Plane_Capabilities(int fd, struct modeset_dev *dev)
 
 // clang-format off
 static int xDRM_Modeset_Atomic_Prepare_Commit(int fd, struct modeset_dev *dev, drmModeAtomicReq *req,
-    uint32_t source_width, uint32_t source_height, int x_offset, int y_offset)
+    uint32_t source_width, uint32_t source_height, 
+    int x_offset, int y_offset, int crtc_width, int crtc_height)
 // clang-format on
 {
     struct modeset_buf *buf = &dev->bufs[dev->front_buf ^ 1];
@@ -271,8 +272,8 @@ static int xDRM_Modeset_Atomic_Prepare_Commit(int fd, struct modeset_dev *dev, d
     // set display property
     ret = xDRM_Set_DRM_Object_Property(req, &dev->plane, "CRTC_X", x_offset);
     ret |= xDRM_Set_DRM_Object_Property(req, &dev->plane, "CRTC_Y", y_offset);
-    ret |= xDRM_Set_DRM_Object_Property(req, &dev->plane, "CRTC_W", dev->actual_width);  //source_width
-    ret |= xDRM_Set_DRM_Object_Property(req, &dev->plane, "CRTC_H", dev->actual_height); //source_height
+    ret |= xDRM_Set_DRM_Object_Property(req, &dev->plane, "CRTC_W", crtc_width);
+    ret |= xDRM_Set_DRM_Object_Property(req, &dev->plane, "CRTC_H", crtc_height);
 
     // zpos
     ret = xDRM_Set_DRM_Object_Property(req, &dev->plane, "zpos", 0);
@@ -286,7 +287,8 @@ static int xDRM_Modeset_Atomic_Prepare_Commit(int fd, struct modeset_dev *dev, d
 
 // clang-format off
 static int xDRM_Modeset_Atomic_Commit(int fd, struct modeset_dev *dev, uint32_t flags, 
-    uint32_t source_width, uint32_t source_height, int x_offset, int y_offset)
+    uint32_t source_width, uint32_t source_height, 
+    int x_offset, int y_offset, int crtc_width, int crtc_height)
 // clang-format on
 {
     drmModeAtomicReq *req;
@@ -299,7 +301,7 @@ static int xDRM_Modeset_Atomic_Commit(int fd, struct modeset_dev *dev, uint32_t 
         return -ENOMEM;
     }
 
-    ret = xDRM_Modeset_Atomic_Prepare_Commit(fd, dev, req, source_width, source_height, x_offset, y_offset);
+    ret = xDRM_Modeset_Atomic_Prepare_Commit(fd, dev, req, source_width, source_height, x_offset, y_offset, crtc_width, crtc_height);
     if (ret < 0)
     {
         fprintf(stderr, "Failed to prepare atomic commit for plane %u\n", dev->plane.id);
@@ -320,10 +322,14 @@ static int xDRM_Modeset_Atomic_Commit(int fd, struct modeset_dev *dev, uint32_t 
     return ret;
 }
 
-int xDRM_Modeset_Atomic_Page_Flip(int fd, struct modeset_dev *dev, uint32_t source_width, uint32_t source_height, int x_offset, int y_offset)
+// clang-format off
+int xDRM_Modeset_Atomic_Page_Flip(int fd, struct modeset_dev *dev, 
+    uint32_t source_width, uint32_t source_height, 
+    int x_offset, int y_offset, int crtc_width, int crtc_height)
+// clang-format on
 {
     uint32_t flags = DRM_MODE_PAGE_FLIP_EVENT;
-    return xDRM_Modeset_Atomic_Commit(fd, dev, flags, source_width, source_height, x_offset, y_offset);
+    return xDRM_Modeset_Atomic_Commit(fd, dev, flags, source_width, source_height, x_offset, y_offset, crtc_width, crtc_height);
 }
 
 /* ====================================================================================================================== */
@@ -434,7 +440,12 @@ static int xDRM_Modeset_Atomic_Modeset(int fd, struct modeset_dev *dev)
         return -ENOMEM;
     }
 
-    ret = xDRM_Modeset_Atomic_Prepare_Commit(fd, dev, req, dev->src_width, dev->src_height, dev->x_offset, dev->y_offset);
+    // Use initial parameters from dev struct
+    ret = xDRM_Modeset_Atomic_Prepare_Commit(fd, dev, req, 
+        dev->src_width, dev->src_height, 
+        dev->x_offset, dev->y_offset, 
+        dev->actual_width, dev->actual_height);
+        
     if (ret < 0)
     {
         drmModeAtomicFree(req);
@@ -485,6 +496,9 @@ static int xDRM_Modeset_Atomic_Init(int fd)
 void xDRM_Page_Flip_Handler(int fd, unsigned int frame, unsigned int sec, unsigned int usec, unsigned int crtc_id, void *data)
 {
     struct modeset_dev *dev = (struct modeset_dev *)data;
+    
+    // Local variables to hold a snapshot of the geometry
+    int current_x, current_y, current_w, current_h;
 
     dev->pflip_pending = false;
 
@@ -497,8 +511,19 @@ void xDRM_Page_Flip_Handler(int fd, unsigned int frame, unsigned int sec, unsign
         // push data
         xDRM_Pattern((uint32_t *)buf->map, dev->src_width, dev->src_height, frame_count_test_pattern++);
 
-        // commit
-        int ret = xDRM_Modeset_Atomic_Page_Flip(fd, dev, dev->src_width, dev->src_height, dev->x_offset, dev->y_offset);
+        // Lock to read geometry safely
+        pthread_mutex_lock(&dev->buffer_mutex);
+        current_x = dev->x_offset;
+        current_y = dev->y_offset;
+        current_w = dev->actual_width;
+        current_h = dev->actual_height;
+        pthread_mutex_unlock(&dev->buffer_mutex);
+
+        // commit with captured geometry
+        int ret = xDRM_Modeset_Atomic_Page_Flip(fd, dev, 
+            dev->src_width, dev->src_height, 
+            current_x, current_y, current_w, current_h);
+
         if (ret >= 0)
         {
             dev->front_buf ^= 1;
@@ -514,11 +539,23 @@ void xDRM_Page_Flip_Handler(int fd, unsigned int frame, unsigned int sec, unsign
         struct modeset_buf *buf = &dev->bufs[dev->front_buf ^ 1];
 
         pthread_mutex_lock(&dev->buffer_mutex);
+        
+        // Copy pixel data
         memcpy(buf->map, dev->data_buffer, dev->src_width * dev->src_height * sizeof(uint32_t));
+        
+        // Capture geometry state atomically with the buffer update
+        current_x = dev->x_offset;
+        current_y = dev->y_offset;
+        current_w = dev->actual_width;
+        current_h = dev->actual_height;
+        
         pthread_mutex_unlock(&dev->buffer_mutex);
 
-        // commit
-        int ret = xDRM_Modeset_Atomic_Page_Flip(fd, dev, dev->src_width, dev->src_height, dev->x_offset, dev->y_offset);
+        // commit with captured geometry
+        int ret = xDRM_Modeset_Atomic_Page_Flip(fd, dev, 
+            dev->src_width, dev->src_height, 
+            current_x, current_y, current_w, current_h);
+
         if (ret >= 0)
         {
             dev->front_buf ^= 1;
@@ -675,7 +712,11 @@ void xDRM_Draw(int fd, struct modeset_dev *dev)
 
     // execute first atomic page flip
 re_flip:
-    ret = xDRM_Modeset_Atomic_Page_Flip(fd, dev, dev->src_width, dev->src_height, dev->x_offset, dev->y_offset);
+    ret = xDRM_Modeset_Atomic_Page_Flip(fd, dev, 
+        dev->src_width, dev->src_height, 
+        dev->x_offset, dev->y_offset, 
+        dev->actual_width, dev->actual_height);
+        
     if (ret)
     {
         fprintf(stderr, "Initial page flip failed: %s\n", strerror(errno));
@@ -724,6 +765,23 @@ int xDRM_Push(struct modeset_dev *dev, uint32_t *data, size_t size)
     pthread_mutex_lock(&dev->buffer_mutex);
 
     memcpy(dev->data_buffer, data, size);
+
+    pthread_mutex_unlock(&dev->buffer_mutex);
+
+    return 0;
+}
+
+int xDRM_Set_Layout(struct modeset_dev *dev, int x_offset, int y_offset, int actual_width, int actual_height)
+{
+    if (!dev)
+        return -EINVAL;
+
+    pthread_mutex_lock(&dev->buffer_mutex);
+    
+    dev->x_offset = x_offset;
+    dev->y_offset = y_offset;
+    dev->actual_width = actual_width;
+    dev->actual_height = actual_height;
 
     pthread_mutex_unlock(&dev->buffer_mutex);
 
