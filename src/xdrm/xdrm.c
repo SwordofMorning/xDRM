@@ -271,8 +271,8 @@ static int xDRM_Modeset_Atomic_Prepare_Commit(int fd, struct modeset_dev *dev, d
     // set display property
     ret = xDRM_Set_DRM_Object_Property(req, &dev->plane, "CRTC_X", x_offset);
     ret |= xDRM_Set_DRM_Object_Property(req, &dev->plane, "CRTC_Y", y_offset);
-    ret |= xDRM_Set_DRM_Object_Property(req, &dev->plane, "CRTC_W", source_width);
-    ret |= xDRM_Set_DRM_Object_Property(req, &dev->plane, "CRTC_H", source_height);
+    ret |= xDRM_Set_DRM_Object_Property(req, &dev->plane, "CRTC_W", dev->actual_width);  //source_width
+    ret |= xDRM_Set_DRM_Object_Property(req, &dev->plane, "CRTC_H", dev->actual_height); //source_height
 
     // zpos
     ret = xDRM_Set_DRM_Object_Property(req, &dev->plane, "zpos", 0);
@@ -332,7 +332,8 @@ int xDRM_Modeset_Atomic_Page_Flip(int fd, struct modeset_dev *dev, uint32_t sour
 
 // clang-format off
 static int xDRM_Modeset_Setup_Dev(int fd, struct modeset_dev *dev,
-    uint32_t conn_id, uint32_t crtc_id, uint32_t plane_id, uint32_t source_width, uint32_t source_height, int x_offset, int y_offset)
+    uint32_t conn_id, uint32_t crtc_id, uint32_t plane_id, 
+    uint32_t source_width, uint32_t source_height, int x_offset, int y_offset, int actual_width, int actual_height)
 // clang-format on
 {
     int ret;
@@ -377,6 +378,8 @@ static int xDRM_Modeset_Setup_Dev(int fd, struct modeset_dev *dev,
     dev->src_height = source_height;
     dev->x_offset = x_offset;
     dev->y_offset = y_offset;
+    dev->actual_width = actual_width;
+    dev->actual_height = actual_height;
 
     // Step 5 : set property blob
     ret = drmModeCreatePropertyBlob(fd, &dev->mode, sizeof(dev->mode), &dev->mode_blob_id);
@@ -587,7 +590,7 @@ static void xDRM_Modeset_Cleanup(int fd, struct modeset_dev *dev)
 
 // clang-format off
 int xDRM_Init(struct modeset_dev **dev, uint32_t conn_id, uint32_t crtc_id, uint32_t plane_id, 
-    uint32_t source_width, uint32_t source_height, int x_offset, int y_offset)
+    uint32_t source_width, uint32_t source_height, int x_offset, int y_offset, int actual_width, int actual_height)
 // clang-format on
 {
     int fd, ret;
@@ -618,7 +621,7 @@ int xDRM_Init(struct modeset_dev **dev, uint32_t conn_id, uint32_t crtc_id, uint
     memset(*dev, 0, sizeof(struct modeset_dev));
 
     // Step 4 : Setup Device
-    ret = xDRM_Modeset_Setup_Dev(fd, *dev, conn_id, crtc_id, plane_id, source_width, source_height, x_offset, y_offset);
+    ret = xDRM_Modeset_Setup_Dev(fd, *dev, conn_id, crtc_id, plane_id, source_width, source_height, x_offset, y_offset, actual_width, actual_height);
     if (ret)
     {
         free(*dev);

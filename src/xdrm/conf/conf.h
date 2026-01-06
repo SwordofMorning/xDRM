@@ -42,6 +42,8 @@ struct modeset_dev
     uint32_t src_height;
     int x_offset;
     int y_offset;
+    int actual_width;
+    int actual_height;
 
     drmModeModeInfo mode;
     uint32_t mode_blob_id;

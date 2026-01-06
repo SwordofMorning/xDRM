@@ -35,16 +35,19 @@ extern "C" {
  * @param conn_id connector id
  * @param crtc_id CRTC id
  * @param plane_id plane id
- * @param source_width display width (by pixel) on screen
- * @param source_height display height (by pixel) on screen
+ * @param source_width screen width (by pixel)
+ * @param source_height screen height (by pixel)
  * @param x_offset offset on width
  * @param y_offset offset on height
+ * @param actual_width display width on screent (by pixel)
+ * @param actual_height display height on screent (by pixel)
  * 
  * @return fd or fail
  * @retval -1, Init fail
  * @retval fd, file descriptor of /dev/dri/card0.
  */
-int xDRM_Init(struct modeset_dev **dev, uint32_t conn_id, uint32_t crtc_id, uint32_t plane_id, uint32_t source_width, uint32_t source_height, int x_offset, int y_offset);
+int xDRM_Init(struct modeset_dev **dev, uint32_t conn_id, uint32_t crtc_id, uint32_t plane_id, 
+    uint32_t source_width, uint32_t source_height, int x_offset, int y_offset, int actual_width, int actual_height);
 
 /**
  * @brief xDRM cleanup, release modeset_dev and close fd
