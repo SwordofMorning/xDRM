@@ -14,6 +14,11 @@ extern "C" {
 #define CRTC_ID_DSI2 137
 #define PLANE_ID_DSI2 187
 
+// HDMI
+#define CONN_ID_HDMI 208
+#define CRTC_ID_HDMI 71
+#define PLANE_ID_HDMI 145
+
 #ifdef __cplusplus
 }
 #endif

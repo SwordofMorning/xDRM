@@ -2,7 +2,7 @@
 #include <iostream>
 #include <thread>
 
-struct modeset_dev *panel, *evf;
+struct modeset_dev *panel, *evf, *hdmi;
 uint32_t image_data[1088 * 1920];
 
 void panel_func()
@@ -19,17 +19,25 @@ void evf_func()
     xDRM_Exit(fd, evf);
 }
 
+void hdmi_func()
+{
+    int fd = xDRM_Init(&hdmi, CONN_ID_HDMI, CRTC_ID_HDMI, PLANE_ID_HDMI, 1920, 1088, 0, 0, 1920, 1088);
+    xDRM_Draw(fd, hdmi);
+    xDRM_Exit(fd, hdmi);
+}
+
 int main()
 {
     std::thread th_panel = std::thread(panel_func);
     std::thread th_evf = std::thread(evf_func);
+    std::thread th_hdmi = std::thread(hdmi_func);
 
     // wait to finish initialize
     sleep(1);
 
     int count = 0;
     int mode_switch_counter = 0;
-    // true: 1440x1080, false: 1280x1080
+    // true: 1440x1080, false: 1280x720
     bool large_sensor_mode = true;
 
     // Mode A: 1440x1080
@@ -38,9 +46,9 @@ int main()
     const int MODE_A_X = 240;
     const int MODE_A_Y = 0;
 
-    // Mode B: 1280x1080
+    // Mode B: 1280x720
     const int MODE_B_W = 1280;
-    const int MODE_B_H = 1080;
+    const int MODE_B_H = 720;
     const int MODE_B_X = 320;
     const int MODE_B_Y = 0;
 
@@ -49,6 +57,7 @@ int main()
         xDRM_Pattern(image_data, 1088, 1920, count++);
         xDRM_Push(panel, image_data, sizeof(image_data));
         xDRM_Push(evf, image_data, sizeof(image_data));
+        xDRM_Push(hdmi, image_data, sizeof(image_data));
 
         // Switch Mode
         if (++mode_switch_counter >= 200)
@@ -64,7 +73,7 @@ int main()
             }
             else
             {
-                printf("Switching to Mode B: 1280x1080 (Offset X: %d)\n", MODE_B_X);
+                printf("Switching to Mode B: 1280x720 (Offset X: %d)\n", MODE_B_X);
                 xDRM_Set_Layout(panel, MODE_B_X, MODE_B_Y, MODE_B_W, MODE_B_H);
                 xDRM_Set_Layout(evf, MODE_B_X, MODE_B_Y, MODE_B_W, MODE_B_H);
             }
@@ -77,6 +86,8 @@ int main()
         th_panel.join();
     if (th_evf.joinable())
         th_evf.join();
+    if (th_hdmi.joinable())
+        th_hdmi.join();
 
     return 0;
 }
