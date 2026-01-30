@@ -441,11 +441,8 @@ static int xDRM_Modeset_Atomic_Modeset(int fd, struct modeset_dev *dev)
     }
 
     // Use initial parameters from dev struct
-    ret = xDRM_Modeset_Atomic_Prepare_Commit(fd, dev, req, 
-        dev->src_width, dev->src_height, 
-        dev->x_offset, dev->y_offset, 
-        dev->actual_width, dev->actual_height);
-        
+    ret = xDRM_Modeset_Atomic_Prepare_Commit(fd, dev, req, dev->src_width, dev->src_height, dev->x_offset, dev->y_offset, dev->actual_width, dev->actual_height);
+
     if (ret < 0)
     {
         drmModeAtomicFree(req);
@@ -496,7 +493,7 @@ static int xDRM_Modeset_Atomic_Init(int fd)
 void xDRM_Page_Flip_Handler(int fd, unsigned int frame, unsigned int sec, unsigned int usec, unsigned int crtc_id, void *data)
 {
     struct modeset_dev *dev = (struct modeset_dev *)data;
-    
+
     // Local variables to hold a snapshot of the geometry
     int current_x, current_y, current_w, current_h;
 
@@ -520,9 +517,7 @@ void xDRM_Page_Flip_Handler(int fd, unsigned int frame, unsigned int sec, unsign
         pthread_mutex_unlock(&dev->buffer_mutex);
 
         // commit with captured geometry
-        int ret = xDRM_Modeset_Atomic_Page_Flip(fd, dev, 
-            dev->src_width, dev->src_height, 
-            current_x, current_y, current_w, current_h);
+        int ret = xDRM_Modeset_Atomic_Page_Flip(fd, dev, dev->src_width, dev->src_height, current_x, current_y, current_w, current_h);
 
         if (ret >= 0)
         {
@@ -539,22 +534,20 @@ void xDRM_Page_Flip_Handler(int fd, unsigned int frame, unsigned int sec, unsign
         struct modeset_buf *buf = &dev->bufs[dev->front_buf ^ 1];
 
         pthread_mutex_lock(&dev->buffer_mutex);
-        
+
         // Copy pixel data
         memcpy(buf->map, dev->data_buffer, dev->src_width * dev->src_height * sizeof(uint32_t));
-        
+
         // Capture geometry state atomically with the buffer update
         current_x = dev->x_offset;
         current_y = dev->y_offset;
         current_w = dev->actual_width;
         current_h = dev->actual_height;
-        
+
         pthread_mutex_unlock(&dev->buffer_mutex);
 
         // commit with captured geometry
-        int ret = xDRM_Modeset_Atomic_Page_Flip(fd, dev, 
-            dev->src_width, dev->src_height, 
-            current_x, current_y, current_w, current_h);
+        int ret = xDRM_Modeset_Atomic_Page_Flip(fd, dev, dev->src_width, dev->src_height, current_x, current_y, current_w, current_h);
 
         if (ret >= 0)
         {
@@ -710,28 +703,32 @@ void xDRM_Draw(int fd, struct modeset_dev *dev)
     fds[0].events = POLLIN;
     fds[0].revents = 0;
 
+    // Running State for Hotplug
+    dev->running = true;
+
     // execute first atomic page flip
 re_flip:
-    ret = xDRM_Modeset_Atomic_Page_Flip(fd, dev, 
-        dev->src_width, dev->src_height, 
-        dev->x_offset, dev->y_offset, 
-        dev->actual_width, dev->actual_height);
-        
+    ret = xDRM_Modeset_Atomic_Page_Flip(fd, dev, dev->src_width, dev->src_height, dev->x_offset, dev->y_offset, dev->actual_width, dev->actual_height);
+
     if (ret)
     {
         fprintf(stderr, "Initial page flip failed: %s\n", strerror(errno));
-        goto re_flip;
+        // If initial flip fails, it might be disconnected immediately
+        return;
     }
 
     dev->front_buf ^= 1;
     dev->pflip_pending = true;
 
     // main loop
-    while (1)
+    while (dev->running)
     {
         fds[0].revents = 0;
 
-        ret = poll(fds, 1, -1);
+        // [Modify] Set timeout to 1000ms.
+        // If cable is unplugged, VBlank stops, so we need to wake up to check status.
+        ret = poll(fds, 1, 1000);
+
         if (ret < 0)
         {
             if (errno == EINTR)
@@ -739,8 +736,38 @@ re_flip:
             printf("poll failed: %s\n", strerror(errno));
             break;
         }
+        else if (ret == 0)
+        {
+            // Timeout handling (No VBlank event for 1s)
+            // This usually means the display pipeline is stuck or cable unplugged.
+            printf("Warning: VBlank timeout, checking connection...\n");
 
-        if (fds[0].revents & POLLIN)
+            // Check if physically still connected
+            drmModeConnector *conn = drmModeGetConnector(fd, dev->connector.id);
+            if (conn)
+            {
+                if (conn->connection != DRM_MODE_CONNECTED)
+                {
+                    printf("HDMI disconnected detected.\n");
+                    dev->running = false; // Break loop
+                }
+                drmModeFreeConnector(conn);
+            }
+            else
+            {
+                dev->running = false;
+            }
+
+            // If still running but timed out, try to re-trigger flip?
+            // Usually safer to exit and re-init in main loop.
+            if (dev->running)
+            {
+                // Optional: try to recover or just exit to re-init
+                printf("Connection alive but no VBlank. Restarting sequence.\n");
+                dev->running = false;
+            }
+        }
+        else if (fds[0].revents & POLLIN)
         {
             ret = drmHandleEvent(fd, &ev);
             if (ret != 0)
@@ -777,7 +804,7 @@ int xDRM_Set_Layout(struct modeset_dev *dev, int x_offset, int y_offset, int act
         return -EINVAL;
 
     pthread_mutex_lock(&dev->buffer_mutex);
-    
+
     dev->x_offset = x_offset;
     dev->y_offset = y_offset;
     dev->actual_width = actual_width;
@@ -786,4 +813,27 @@ int xDRM_Set_Layout(struct modeset_dev *dev, int x_offset, int y_offset, int act
     pthread_mutex_unlock(&dev->buffer_mutex);
 
     return 0;
+}
+
+int xDRM_Check_Connection(uint32_t conn_id)
+{
+    int fd = open("/dev/dri/card0", O_RDWR | O_CLOEXEC);
+    if (fd < 0)
+    {
+        return -errno;
+    }
+
+    drmModeConnector *conn = drmModeGetConnector(fd, conn_id);
+    if (!conn)
+    {
+        close(fd);
+        return -errno;
+    }
+
+    int connected = (conn->connection == DRM_MODE_CONNECTED) ? 1 : 0;
+
+    drmModeFreeConnector(conn);
+    close(fd);
+
+    return connected;
 }

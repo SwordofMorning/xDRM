@@ -46,8 +46,16 @@ extern "C" {
  * @retval -1, Init fail
  * @retval fd, file descriptor of /dev/dri/card0.
  */
-int xDRM_Init(struct modeset_dev **dev, uint32_t conn_id, uint32_t crtc_id, uint32_t plane_id, 
-    uint32_t source_width, uint32_t source_height, int x_offset, int y_offset, int actual_width, int actual_height);
+int xDRM_Init(struct modeset_dev **dev,
+              uint32_t conn_id,
+              uint32_t crtc_id,
+              uint32_t plane_id,
+              uint32_t source_width,
+              uint32_t source_height,
+              int x_offset,
+              int y_offset,
+              int actual_width,
+              int actual_height);
 
 /**
  * @brief xDRM cleanup, release modeset_dev and close fd
@@ -88,6 +96,13 @@ int xDRM_Push(struct modeset_dev *dev, uint32_t *data, size_t size);
  * @return int 0 on success
  */
 int xDRM_Set_Layout(struct modeset_dev *dev, int x_offset, int y_offset, int actual_width, int actual_height);
+
+/**
+ * @brief Check if a specific connector is connected
+ * @param conn_id connector id to check
+ * @return 1 if connected, 0 if disconnected, <0 on error
+ */
+int xDRM_Check_Connection(uint32_t conn_id);
 
 #ifdef __cplusplus
 }

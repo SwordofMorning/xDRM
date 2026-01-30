@@ -21,9 +21,62 @@ void evf_func()
 
 void hdmi_func()
 {
-    int fd = xDRM_Init(&hdmi, CONN_ID_HDMI, CRTC_ID_HDMI, PLANE_ID_HDMI, 1920, 1088, 0, 0, 1920, 1088);
-    xDRM_Draw(fd, hdmi);
-    xDRM_Exit(fd, hdmi);
+    // Note: Use local pointer to avoid crash
+    struct modeset_dev *local_dev = NULL;
+    const int RETRY_DELAY_MS = 1000;
+
+    printf("[HDMI] Thread started, waiting for connection...\n");
+
+    while (1)
+    {
+        // [State 1 Connection] Try Connection
+        int connected = xDRM_Check_Connection(CONN_ID_HDMI);
+
+        if (connected == 1)
+        {
+            printf("[HDMI] Detected connection, initializing...\n");
+
+            // Step_Ptr 1: Init
+            // Pass in the address of the local pointer &local_dev;
+            // at this point, the global hdmi is still nullptr.
+            int fd = xDRM_Init(&local_dev, CONN_ID_HDMI, CRTC_ID_HDMI, PLANE_ID_HDMI, 1920, 1088, 0, 0, 1920, 1088);
+
+            if (fd >= 0 && local_dev != nullptr)
+            {
+                // Step_Ptr 2: Assign
+                // Assign local_dev to global hdmi pointer.
+                hdmi = local_dev;
+
+                // [State 2 Loop] Draw Loop
+                printf("[HDMI] Starting draw loop.\n");
+                xDRM_Draw(fd, local_dev);
+
+                // [State 3 Clean]: Cleanup
+                printf("[HDMI] Exited draw loop, cleaning up.\n");
+
+                // Step_Ptr 3：Clean
+                // Cut off the global pointer
+                // to prevent the main thread from continuing to access it.
+                hdmi = nullptr;
+
+                // Step_Ptr 3：Clean
+                // Sleep 50ms to make sure main thread exit hdmi's resource (xDRM_Push)
+                usleep(50 * 1000);
+
+                // Step_Ptr 3：Clean
+                // Clean local pointer.
+                xDRM_Exit(fd, local_dev);
+                local_dev = nullptr;
+            }
+            else
+            {
+                fprintf(stderr, "[HDMI] Initialization failed, retrying in %d ms.\n", RETRY_DELAY_MS);
+            }
+        }
+
+        // Wait before next check
+        usleep(RETRY_DELAY_MS * 1000);
+    }
 }
 
 int main()

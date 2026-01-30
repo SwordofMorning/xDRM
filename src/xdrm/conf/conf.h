@@ -51,6 +51,8 @@ struct modeset_dev
     bool pflip_pending;
     bool cleanup;
 
+    bool running;
+
     uint32_t *data_buffer;
     pthread_mutex_t buffer_mutex;
 };
